@@ -1,0 +1,4 @@
+*.pbxproj merge=union
+*.plist text
+*.swift text eol=lf
+*.md text eol=lf

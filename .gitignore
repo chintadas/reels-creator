@@ -1,0 +1,21 @@
+# Xcode
+## User settings
+xcuserdata/
+*.xcuserdatad
+*.xcuserstate
+
+## Build generated
+build/
+DerivedData/
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+
+## Swift Package Manager
+.build/
+Packages/
+
+# macOS
+.DS_Store
+*.swp
+*~
