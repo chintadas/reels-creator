@@ -157,12 +157,19 @@ enum ReelVideoComposer {
             throw ComposerError.exportSessionCreationFailed
         }
 
-        var originalAudioTrack: AVMutableCompositionTrack?
+        // Original clip audio uses two alternating tracks (mirroring video A/B) so crossfaded
+        // clips never overlap on the same track. Inserting into the middle of a track would
+        // shift existing media later and desync audio from video.
+        var originalAudioTracks: [AVMutableCompositionTrack] = []
         if !timeline.muteOriginalVideoClips {
-            originalAudioTrack = composition.addMutableTrack(
-                withMediaType: .audio,
-                preferredTrackID: kCMPersistentTrackID_Invalid
-            )
+            for _ in 0..<2 {
+                if let track = composition.addMutableTrack(
+                    withMediaType: .audio,
+                    preferredTrackID: kCMPersistentTrackID_Invalid
+                ) {
+                    originalAudioTracks.append(track)
+                }
+            }
         }
 
         var resolvedSegments: [ResolvedSegmentAsset] = []
@@ -234,16 +241,44 @@ enum ReelVideoComposer {
 
             let desiredDuration = CMTime(seconds: segment.durationSeconds, preferredTimescale: timescale)
             let clampedDuration = CMTimeMinimum(desiredDuration, assetDuration)
-            let insertAt = CMTime(seconds: segment.startTimeSeconds, preferredTimescale: timescale)
+            guard clampedDuration > .zero else {
+                throw ComposerError.missingVideoTrack(segmentTitle)
+            }
             let sourceRange = CMTimeRange(start: .zero, duration: clampedDuration)
-
             let targetTrack = (segment.trackIndex == 0) ? videoTrackA : videoTrackB
+
+            // Derive the insert time from the *actual* end of the previous clip (not the planned
+            // Double timeline), so clamped/rounded durations never leave gaps or overlaps.
+            var insertAt = CMTime.zero
+            if let previous = resolvedSegments.last {
+                let plannedOverlap = max(0, previous.planned.endTimeSeconds - segment.startTimeSeconds)
+                let previousDuration = previous.endTime - previous.startTime
+                let maxOverlap = CMTimeMultiplyByRatio(
+                    CMTimeMinimum(previousDuration, clampedDuration),
+                    multiplier: 1,
+                    divisor: 2
+                )
+                let overlap = CMTimeMinimum(
+                    CMTime(seconds: plannedOverlap, preferredTimescale: timescale),
+                    maxOverlap
+                )
+                insertAt = previous.endTime - overlap
+            }
+            // Never insert before existing media on the same track (that would shift it later).
+            insertAt = CMTimeMaximum(insertAt, trackEnd(targetTrack))
+
             try targetTrack.insertTimeRange(sourceRange, of: sourceVideoTrack, at: insertAt)
 
-            if segment.keepOriginalAudio, let originalAudioTrack {
+            if segment.keepOriginalAudio, !originalAudioTracks.isEmpty {
+                let audioTrack = originalAudioTracks[segment.trackIndex % originalAudioTracks.count]
                 let audioTracks = try await segmentAsset.loadTracks(withMediaType: .audio)
-                if let sourceAudioTrack = audioTracks.first {
-                    try? originalAudioTrack.insertTimeRange(sourceRange, of: sourceAudioTrack, at: insertAt)
+                if let sourceAudioTrack = audioTracks.first, insertAt >= trackEnd(audioTrack) {
+                    let audioDuration = try await segmentAsset.load(.duration)
+                    let audioRange = CMTimeRange(
+                        start: .zero,
+                        duration: CMTimeMinimum(clampedDuration, audioDuration)
+                    )
+                    try? audioTrack.insertTimeRange(audioRange, of: sourceAudioTrack, at: insertAt)
                 }
             }
 
@@ -261,6 +296,10 @@ enum ReelVideoComposer {
             )
         }
 
+        guard let videoEnd = resolvedSegments.map(\.endTime).max(), videoEnd > .zero else {
+            throw ComposerError.noMediaSelected
+        }
+
         // 5. Add custom background audio (and fade out over final 0.5s) if selected.
         var audioMix: AVMutableAudioMix?
         if case .customTrack(let audioURL, _) = request.audioMode {
@@ -272,11 +311,7 @@ enum ReelVideoComposer {
                    preferredTrackID: kCMPersistentTrackID_Invalid
                ) {
                 let bgAssetDuration = try await bgAudioAsset.load(.duration)
-                let totalTimelineDuration = CMTime(
-                    seconds: timeline.totalDurationSeconds,
-                    preferredTimescale: timescale
-                )
-                let insertedAudioDuration = CMTimeMinimum(bgAssetDuration, totalTimelineDuration)
+                let insertedAudioDuration = CMTimeMinimum(bgAssetDuration, videoEnd)
                 if CMTimeGetSeconds(insertedAudioDuration) > 0.05 {
                     try compAudioTrack.insertTimeRange(
                         CMTimeRange(start: .zero, duration: insertedAudioDuration),
@@ -302,9 +337,22 @@ enum ReelVideoComposer {
             }
         }
 
-        // 6. Build 1080x1920 video composition instructions with crossfades.
+        // 6. Sanitize the composition: no track may extend past the last video frame (otherwise
+        // the video composition instructions don't cover the full duration and export fails with
+        // err -16976), and empty tracks are removed.
+        for track in composition.tracks {
+            let end = trackEnd(track)
+            if end > videoEnd {
+                track.removeTimeRange(CMTimeRange(start: videoEnd, end: end))
+            }
+        }
+        for track in composition.tracks where track.segments.isEmpty {
+            composition.removeTrack(track)
+        }
+
+        // 7. Build 1080x1920 video composition instructions with crossfades.
         await statusHandler("Encoding 9:16 Reel...")
-        let videoComposition = buildVideoComposition(for: resolvedSegments)
+        let videoComposition = buildVideoComposition(for: resolvedSegments, totalDuration: videoEnd)
 
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("reel-\(UUID().uuidString).mp4")
@@ -326,7 +374,11 @@ enum ReelVideoComposer {
         exportSession.shouldOptimizeForNetworkUse = true
 
         if #available(iOS 18.0, *) {
-            try await exportSession.export(to: outputURL, as: .mp4)
+            do {
+                try await exportSession.export(to: outputURL, as: .mp4)
+            } catch {
+                throw ComposerError.exportFailed(error)
+            }
         } else {
             await exportSession.export()
             if exportSession.status != .completed {
@@ -338,44 +390,66 @@ enum ReelVideoComposer {
         return outputURL
     }
 
+    private static func trackEnd(_ track: AVMutableCompositionTrack) -> CMTime {
+        track.segments.last?.timeMapping.target.end ?? .zero
+    }
+
+    /// Builds instructions that tile `[0, totalDuration]` contiguously with no gaps — a hard
+    /// requirement of AVVideoComposition (violations fail export with err -16976).
     private static func buildVideoComposition(
-        for segments: [ResolvedSegmentAsset]
+        for segments: [ResolvedSegmentAsset],
+        totalDuration: CMTime
     ) -> AVMutableVideoComposition {
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
         videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
 
-        var rawBoundaries: [CMTime] = []
+        var rawBoundaries: [CMTime] = [.zero, totalDuration]
         for seg in segments {
             rawBoundaries.append(seg.startTime)
             rawBoundaries.append(seg.endTime)
         }
 
-        let sortedBoundaries = rawBoundaries
-            .sorted { CMTimeCompare($0, $1) < 0 }
+        let tolerance = CMTime(value: 1, timescale: timescale)
+        var sortedBoundaries = rawBoundaries
+            .filter { $0 >= .zero && $0 <= totalDuration }
+            .sorted()
             .reduce(into: [CMTime]()) { unique, time in
-                if let last = unique.last, CMTimeCompare(CMTimeSubtract(time, last), CMTime(value: 1, timescale: timescale)) <= 0 {
+                if let last = unique.last, time - last <= tolerance {
                     return
                 }
                 unique.append(time)
             }
+        // Guarantee the final boundary is exactly the composition end.
+        if sortedBoundaries.count >= 2 {
+            sortedBoundaries[sortedBoundaries.count - 1] = totalDuration
+        } else {
+            sortedBoundaries = [.zero, totalDuration]
+        }
 
         var instructions: [AVMutableVideoCompositionInstruction] = []
 
-        for idx in 0..<max(0, sortedBoundaries.count - 1) {
+        for idx in 0..<(sortedBoundaries.count - 1) {
             let sliceStart = sortedBoundaries[idx]
             let sliceEnd = sortedBoundaries[idx + 1]
             let sliceDuration = CMTimeSubtract(sliceEnd, sliceStart)
-            guard CMTimeGetSeconds(sliceDuration) > 0.001 else { continue }
+            guard sliceDuration > .zero else { continue }
 
             let sliceMid = CMTimeAdd(sliceStart, CMTimeMultiplyByFloat64(sliceDuration, multiplier: 0.5))
-            let activeSegments = segments
+            var activeSegments = segments
                 .filter { seg in
                     CMTimeCompare(seg.startTime, sliceMid) <= 0 && CMTimeCompare(seg.endTime, sliceMid) > 0
                 }
                 .sorted { $0.planned.index < $1.planned.index }
 
-            guard !activeSegments.isEmpty else { continue }
+            // Never leave a gap: fall back to the closest preceding (or first) segment.
+            if activeSegments.isEmpty {
+                if let fallback = segments.last(where: { $0.startTime <= sliceMid }) ?? segments.first {
+                    activeSegments = [fallback]
+                } else {
+                    continue
+                }
+            }
 
             let instruction = AVMutableVideoCompositionInstruction()
             instruction.timeRange = CMTimeRange(start: sliceStart, duration: sliceDuration)

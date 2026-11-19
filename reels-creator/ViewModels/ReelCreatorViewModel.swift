@@ -127,6 +127,8 @@ final class ReelCreatorViewModel {
                     )
                 } else if let data = try await pickerItem.loadTransferable(type: Data.self),
                           let image = UIImage(data: data) {
+                    // TODO: Move full-res photo decoding and thumbnail downscaling off @MainActor
+                    // (e.g., via CGImageSourceCreateThumbnailAtIndex in a background task) to avoid main-thread I/O hangs.
                     let thumbnail = downscaledThumbnail(from: image)
                     selectedItems.append(
                         SelectedMediaItem(

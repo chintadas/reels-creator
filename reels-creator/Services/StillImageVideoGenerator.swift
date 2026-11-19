@@ -138,6 +138,11 @@ enum StillImageVideoGenerator {
 
                 if sessionBox.frameIndex >= totalFrames {
                     sessionBox.input.markAsFinished()
+                    // Explicitly end the session so the last frame gets a full frame duration;
+                    // otherwise the track can end at the last frame's PTS (one frame short).
+                    sessionBox.writer.endSession(
+                        atSourceTime: CMTime(value: CMTimeValue(totalFrames), timescale: fps)
+                    )
                     sessionBox.writer.finishWriting {
                         if sessionBox.writer.status == .completed {
                             finishOnce(.success(()))
