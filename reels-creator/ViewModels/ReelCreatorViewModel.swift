@@ -43,6 +43,11 @@ final class ReelCreatorViewModel {
     var outroVideoDurationSeconds: Double = 0
 
     var polishSettings = ReelPolishSettings()
+    var introText: String = ""
+
+    var resolvedIntroOverlaySpec: IntroTextOverlaySpec? {
+        IntroTextOverlaySpec(rawText: introText)
+    }
 
     var isExporting = false
     var exportProgressMessage = ""
@@ -99,7 +104,8 @@ final class ReelCreatorViewModel {
             clips: specs,
             audio: resolvedAudioMode(),
             outro: resolvedOutroMode(),
-            settings: polishSettings
+            settings: polishSettings,
+            introOverlay: resolvedIntroOverlaySpec
         )
         return timeline.totalDurationSeconds
     }
@@ -168,6 +174,10 @@ final class ReelCreatorViewModel {
 
     func clearAllItems() {
         selectedItems.removeAll()
+    }
+
+    func clearIntroText() {
+        introText = ""
     }
 
     func importAudioFile(url: URL) async {
@@ -312,7 +322,8 @@ final class ReelCreatorViewModel {
             outroLogoImage: logoImage,
             outroBackgroundColor: UIColor(outroBackgroundColor),
             outroVideoURL: outroVideoURL,
-            polishSettings: polishSettings
+            polishSettings: polishSettings,
+            introOverlay: resolvedIntroOverlaySpec
         )
 
         do {

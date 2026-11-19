@@ -11,6 +11,27 @@ struct ReelCompositionRequest {
     let outroBackgroundColor: UIColor
     let outroVideoURL: URL?
     let polishSettings: ReelPolishSettings
+    let introOverlay: IntroTextOverlaySpec?
+
+    init(
+        items: [SelectedMediaItem],
+        audioMode: AudioSelectionMode,
+        outroMode: OutroSelectionMode,
+        outroLogoImage: UIImage?,
+        outroBackgroundColor: UIColor,
+        outroVideoURL: URL?,
+        polishSettings: ReelPolishSettings,
+        introOverlay: IntroTextOverlaySpec? = nil
+    ) {
+        self.items = items
+        self.audioMode = audioMode
+        self.outroMode = outroMode
+        self.outroLogoImage = outroLogoImage
+        self.outroBackgroundColor = outroBackgroundColor
+        self.outroVideoURL = outroVideoURL
+        self.polishSettings = polishSettings
+        self.introOverlay = introOverlay
+    }
 }
 
 enum ReelVideoComposer {
@@ -139,7 +160,8 @@ enum ReelVideoComposer {
             audio: request.audioMode,
             outro: effectiveOutroMode,
             settings: request.polishSettings,
-            beatTimestamps: detectedBeats
+            beatTimestamps: detectedBeats,
+            introOverlay: request.introOverlay
         )
 
         // 4. Build AVMutableComposition with two alternating video tracks for clean crossfades.
@@ -353,6 +375,22 @@ enum ReelVideoComposer {
         // 7. Build 1080x1920 video composition instructions with crossfades.
         await statusHandler("Encoding 9:16 Reel...")
         let videoComposition = buildVideoComposition(for: resolvedSegments, totalDuration: videoEnd)
+
+        let actualMaxIntroEndSeconds: Double
+        if let outroSegment = resolvedSegments.first(where: { $0.planned.isOutro }) {
+            actualMaxIntroEndSeconds = CMTimeGetSeconds(outroSegment.startTime)
+        } else {
+            actualMaxIntroEndSeconds = CMTimeGetSeconds(videoEnd)
+        }
+        if let resolvedIntroOverlay = TimelinePlanner.resolveIntroOverlay(
+            request.introOverlay,
+            maxEndTimeSeconds: actualMaxIntroEndSeconds
+        ) {
+            videoComposition.animationTool = IntroTextOverlayRenderer.makeAnimationTool(
+                for: resolvedIntroOverlay,
+                renderSize: renderSize
+            )
+        }
 
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("reel-\(UUID().uuidString).mp4")

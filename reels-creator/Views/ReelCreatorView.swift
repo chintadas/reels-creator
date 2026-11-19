@@ -15,16 +15,28 @@ struct ReelCreatorView: View {
     @State private var showLogoFileImporter = false
     @State private var showOutroVideoImporter = false
 
+    @FocusState private var isIntroTextFocused: Bool
+
     var body: some View {
         NavigationStack {
             Form {
                 mediaSection
                 audioSection
                 polishSection
+                introTextSection
                 outroSection
                 generateSection
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Reels Creator")
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        isIntroTextFocused = false
+                    }
+                }
+            }
             .overlay {
                 if viewModel.isExporting {
                     exportingOverlay
@@ -339,6 +351,30 @@ struct ReelCreatorView: View {
         }
     }
 
+    private var introTextSection: some View {
+        Section {
+            TextField("Optional opening text (e.g., New Arrivals)", text: $viewModel.introText, axis: .vertical)
+                .lineLimit(2...5)
+                .focused($isIntroTextFocused)
+
+            if let spec = viewModel.resolvedIntroOverlaySpec {
+                IntroTextPreviewCard(
+                    text: spec.text,
+                    backgroundThumbnail: viewModel.selectedItems.first?.thumbnail
+                )
+
+                Button("Clear Intro Text", role: .destructive) {
+                    viewModel.clearIntroText()
+                }
+                .font(.subheadline)
+            }
+        } header: {
+            Text("4. Intro Text")
+        } footer: {
+            Text("Optional. White centered text fades in and out over the first 3 seconds (stops before any outro). Leave blank to omit.")
+        }
+    }
+
     private var outroSection: some View {
         Section {
             Picker("Outro Type", selection: $viewModel.outroType) {
@@ -423,7 +459,7 @@ struct ReelCreatorView: View {
                 }
             }
         } header: {
-            Text("4. Store Logo Outro")
+            Text("5. Store Logo Outro")
         }
     }
 
@@ -493,5 +529,61 @@ struct ReelCreatorView: View {
         case .failure(let error):
             viewModel.errorMessage = error.localizedDescription
         }
+    }
+}
+
+private struct IntroTextPreviewCard: View {
+    let text: String
+    let backgroundThumbnail: UIImage?
+
+    @State private var overlayImage: UIImage?
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ZStack {
+                if let backgroundThumbnail {
+                    Image(uiImage: backgroundThumbnail)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 144, height: 256)
+                        .clipped()
+                } else {
+                    Color.black.opacity(0.9)
+                }
+
+                if let overlayImage {
+                    Image(uiImage: overlayImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 144, height: 256)
+                }
+            }
+            .frame(width: 144, height: 256)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+
+            Text("Preview • Fades in & out over first 3.0s")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .onAppear {
+            refreshOverlay()
+        }
+        .onChange(of: text) { _, _ in
+            refreshOverlay()
+        }
+    }
+
+    private func refreshOverlay() {
+        overlayImage = IntroTextOverlayRenderer.renderOverlayImage(
+            text: text,
+            canvasSize: IntroTextOverlayRenderer.previewCanvasSize
+        )
     }
 }

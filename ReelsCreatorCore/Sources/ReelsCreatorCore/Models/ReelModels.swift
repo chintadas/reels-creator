@@ -55,3 +55,31 @@ public struct ReelPolishSettings: Equatable, Sendable {
         self.beatSyncEnabled = beatSyncEnabled
     }
 }
+
+public struct IntroTextOverlaySpec: Equatable, Sendable {
+    public static let defaultDurationSeconds: Double = 3.0
+    public static let defaultFadeInDurationSeconds: Double = 0.3
+    public static let defaultFadeOutDurationSeconds: Double = 0.4
+
+    public let text: String
+    public let durationSeconds: Double
+    public let fadeInDurationSeconds: Double
+    public let fadeOutDurationSeconds: Double
+
+    public init?(
+        rawText: String,
+        durationSeconds: Double = defaultDurationSeconds,
+        fadeInDurationSeconds: Double = defaultFadeInDurationSeconds,
+        fadeOutDurationSeconds: Double = defaultFadeOutDurationSeconds
+    ) {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, durationSeconds > 0 else {
+            return nil
+        }
+
+        self.text = trimmed
+        self.durationSeconds = durationSeconds
+        self.fadeInDurationSeconds = max(0, fadeInDurationSeconds)
+        self.fadeOutDurationSeconds = max(0, fadeOutDurationSeconds)
+    }
+}

@@ -205,4 +205,111 @@ final class TimelinePlannerTests: XCTestCase {
         XCTAssertFalse(customAudioTimeline.segments[1].keepOriginalAudio)
         XCTAssertFalse(customAudioTimeline.segments[2].keepOriginalAudio)
     }
+
+    func testIntroTextOverlaySpecTrimsAndRejectsBlankText() {
+        XCTAssertNil(IntroTextOverlaySpec(rawText: ""))
+        XCTAssertNil(IntroTextOverlaySpec(rawText: "   \n\t  "))
+
+        let spec = IntroTextOverlaySpec(rawText: "  New\nArrivals  \n")
+        XCTAssertNotNil(spec)
+        XCTAssertEqual(spec?.text, "New\nArrivals")
+        XCTAssertEqual(spec?.durationSeconds ?? 0, 3.0, accuracy: 0.0001)
+        XCTAssertEqual(spec?.fadeInDurationSeconds ?? 0, 0.3, accuracy: 0.0001)
+        XCTAssertEqual(spec?.fadeOutDurationSeconds ?? 0, 0.4, accuracy: 0.0001)
+    }
+
+    func testIntroOverlaySpansOpeningClipsWithoutChangingTotalDuration() throws {
+        let clips = [
+            MediaClipSpec(kind: .photo, sourceDurationSeconds: 2.0),
+            MediaClipSpec(kind: .photo, sourceDurationSeconds: 2.5)
+        ]
+        let settings = ReelPolishSettings(
+            crossfadeEnabled: true,
+            crossfadeDuration: 0.4,
+            beatSyncEnabled: false
+        )
+        let spec = try XCTUnwrap(IntroTextOverlaySpec(rawText: "Weekend Drop"))
+
+        let baseline = TimelinePlanner.plan(
+            clips: clips,
+            audio: .none,
+            outro: .none,
+            settings: settings
+        )
+        XCTAssertNil(baseline.introOverlay)
+
+        let withIntro = TimelinePlanner.plan(
+            clips: clips,
+            audio: .none,
+            outro: .none,
+            settings: settings,
+            introOverlay: spec
+        )
+
+        XCTAssertEqual(withIntro.totalDurationSeconds, baseline.totalDurationSeconds, accuracy: 0.0001)
+        let overlay = try XCTUnwrap(withIntro.introOverlay)
+        XCTAssertEqual(overlay.text, "Weekend Drop")
+        XCTAssertEqual(overlay.startTimeSeconds, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(overlay.durationSeconds, 3.0, accuracy: 0.0001)
+        XCTAssertEqual(overlay.endTimeSeconds, 3.0, accuracy: 0.0001)
+        XCTAssertEqual(overlay.fadeInDurationSeconds, 0.3, accuracy: 0.0001)
+        XCTAssertEqual(overlay.fadeOutDurationSeconds, 0.4, accuracy: 0.0001)
+    }
+
+    func testIntroOverlayStopsBeforeOutroWithAndWithoutCrossfade() throws {
+        let clips = [
+            MediaClipSpec(kind: .photo, sourceDurationSeconds: 2.0)
+        ]
+        let spec = try XCTUnwrap(IntroTextOverlaySpec(rawText: "Limited Release"))
+
+        let noCrossfadeSettings = ReelPolishSettings(crossfadeEnabled: false)
+        let noCrossfadeTimeline = TimelinePlanner.plan(
+            clips: clips,
+            audio: .none,
+            outro: .staticLogo(backgroundColorHex: "#000000", durationSeconds: 2.0),
+            settings: noCrossfadeSettings,
+            introOverlay: spec
+        )
+        let noCrossfadeOutro = try XCTUnwrap(noCrossfadeTimeline.segments.first(where: { $0.isOutro }))
+        let noCrossfadeIntro = try XCTUnwrap(noCrossfadeTimeline.introOverlay)
+        XCTAssertEqual(noCrossfadeOutro.startTimeSeconds, 2.0, accuracy: 0.0001)
+        XCTAssertEqual(noCrossfadeIntro.durationSeconds, 2.0, accuracy: 0.0001)
+        XCTAssertEqual(noCrossfadeIntro.endTimeSeconds, noCrossfadeOutro.startTimeSeconds, accuracy: 0.0001)
+
+        let crossfadeSettings = ReelPolishSettings(crossfadeEnabled: true, crossfadeDuration: 0.4)
+        let crossfadeTimeline = TimelinePlanner.plan(
+            clips: clips,
+            audio: .none,
+            outro: .staticLogo(backgroundColorHex: "#000000", durationSeconds: 2.0),
+            settings: crossfadeSettings,
+            introOverlay: spec
+        )
+        let crossfadeOutro = try XCTUnwrap(crossfadeTimeline.segments.first(where: { $0.isOutro }))
+        let crossfadeIntro = try XCTUnwrap(crossfadeTimeline.introOverlay)
+        XCTAssertEqual(crossfadeOutro.startTimeSeconds, 1.6, accuracy: 0.0001)
+        XCTAssertEqual(crossfadeIntro.durationSeconds, 1.6, accuracy: 0.0001)
+        XCTAssertEqual(crossfadeIntro.endTimeSeconds, crossfadeOutro.startTimeSeconds, accuracy: 0.0001)
+    }
+
+    func testIntroOverlayScalesFadesProportionallyForVeryShortReel() throws {
+        let clips = [
+            MediaClipSpec(kind: .photo, sourceDurationSeconds: 0.5)
+        ]
+        let settings = ReelPolishSettings(crossfadeEnabled: false)
+        let spec = try XCTUnwrap(IntroTextOverlaySpec(rawText: "Quick Flash"))
+
+        let timeline = TimelinePlanner.plan(
+            clips: clips,
+            audio: .none,
+            outro: .none,
+            settings: settings,
+            introOverlay: spec
+        )
+
+        let overlay = try XCTUnwrap(timeline.introOverlay)
+        XCTAssertEqual(overlay.durationSeconds, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(overlay.fadeInDurationSeconds + overlay.fadeOutDurationSeconds, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(overlay.fadeInDurationSeconds, 0.5 * (0.3 / 0.7), accuracy: 0.0001)
+        XCTAssertEqual(overlay.fadeOutDurationSeconds, 0.5 * (0.4 / 0.7), accuracy: 0.0001)
+    }
 }

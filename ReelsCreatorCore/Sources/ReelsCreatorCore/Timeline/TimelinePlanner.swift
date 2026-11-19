@@ -38,22 +38,51 @@ public struct PlannedSegment: Identifiable, Equatable, Sendable {
     }
 }
 
+public struct PlannedIntroOverlay: Equatable, Sendable {
+    public let text: String
+    public let startTimeSeconds: Double
+    public let durationSeconds: Double
+    public let fadeInDurationSeconds: Double
+    public let fadeOutDurationSeconds: Double
+
+    public init(
+        text: String,
+        startTimeSeconds: Double = 0.0,
+        durationSeconds: Double,
+        fadeInDurationSeconds: Double,
+        fadeOutDurationSeconds: Double
+    ) {
+        self.text = text
+        self.startTimeSeconds = startTimeSeconds
+        self.durationSeconds = durationSeconds
+        self.fadeInDurationSeconds = fadeInDurationSeconds
+        self.fadeOutDurationSeconds = fadeOutDurationSeconds
+    }
+
+    public var endTimeSeconds: Double {
+        startTimeSeconds + durationSeconds
+    }
+}
+
 public struct PlannedTimeline: Equatable, Sendable {
     public let segments: [PlannedSegment]
     public let totalDurationSeconds: Double
     public let muteOriginalVideoClips: Bool
     public let backgroundAudioDurationSeconds: Double?
+    public let introOverlay: PlannedIntroOverlay?
 
     public init(
         segments: [PlannedSegment],
         totalDurationSeconds: Double,
         muteOriginalVideoClips: Bool,
-        backgroundAudioDurationSeconds: Double?
+        backgroundAudioDurationSeconds: Double?,
+        introOverlay: PlannedIntroOverlay? = nil
     ) {
         self.segments = segments
         self.totalDurationSeconds = totalDurationSeconds
         self.muteOriginalVideoClips = muteOriginalVideoClips
         self.backgroundAudioDurationSeconds = backgroundAudioDurationSeconds
+        self.introOverlay = introOverlay
     }
 }
 
@@ -65,12 +94,39 @@ public enum TimelinePlanner {
         let keepOriginalAudio: Bool
     }
 
+    public static func resolveIntroOverlay(
+        _ spec: IntroTextOverlaySpec?,
+        maxEndTimeSeconds: Double
+    ) -> PlannedIntroOverlay? {
+        guard let spec else { return nil }
+        let effectiveDuration = min(spec.durationSeconds, max(0, maxEndTimeSeconds))
+        guard effectiveDuration > 0.01 else { return nil }
+
+        var fadeIn = spec.fadeInDurationSeconds
+        var fadeOut = spec.fadeOutDurationSeconds
+        let totalFade = fadeIn + fadeOut
+        if totalFade > effectiveDuration, totalFade > 0 {
+            let scale = effectiveDuration / totalFade
+            fadeIn *= scale
+            fadeOut *= scale
+        }
+
+        return PlannedIntroOverlay(
+            text: spec.text,
+            startTimeSeconds: 0.0,
+            durationSeconds: effectiveDuration,
+            fadeInDurationSeconds: fadeIn,
+            fadeOutDurationSeconds: fadeOut
+        )
+    }
+
     public static func plan(
         clips: [MediaClipSpec],
         audio: AudioSelectionMode,
         outro: OutroSelectionMode,
         settings: ReelPolishSettings,
-        beatTimestamps: [Double] = []
+        beatTimestamps: [Double] = [],
+        introOverlay: IntroTextOverlaySpec? = nil
     ) -> PlannedTimeline {
         let muteOriginalVideoClips: Bool
         let backgroundAudioDurationSeconds: Double?
@@ -172,11 +228,20 @@ public enum TimelinePlanner {
             currentEndTime = segment.endTimeSeconds
         }
 
+        let maxIntroEnd: Double
+        if let outroSegment = plannedSegments.first(where: { $0.isOutro }) {
+            maxIntroEnd = outroSegment.startTimeSeconds
+        } else {
+            maxIntroEnd = currentEndTime
+        }
+        let plannedIntroOverlay = resolveIntroOverlay(introOverlay, maxEndTimeSeconds: maxIntroEnd)
+
         return PlannedTimeline(
             segments: plannedSegments,
             totalDurationSeconds: currentEndTime,
             muteOriginalVideoClips: muteOriginalVideoClips,
-            backgroundAudioDurationSeconds: backgroundAudioDurationSeconds
+            backgroundAudioDurationSeconds: backgroundAudioDurationSeconds,
+            introOverlay: plannedIntroOverlay
         )
     }
 }
