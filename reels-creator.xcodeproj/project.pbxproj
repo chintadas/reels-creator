@@ -21,6 +21,7 @@
 		1100000C /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1200000C /* AVFoundation.framework */; };
 		1100000D /* Accelerate.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1200000D /* Accelerate.framework */; };
 		1100000E /* ReelsCreatorCore in Frameworks */ = {isa = PBXBuildFile; productRef = 1C000001 /* ReelsCreatorCore */; };
+		1100000F /* VideoAudioExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1200000F /* VideoAudioExtractor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -39,6 +40,7 @@
 		1200000C /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 		1200000D /* Accelerate.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Accelerate.framework; path = System/Library/Frameworks/Accelerate.framework; sourceTree = SDKROOT; };
 		1200000E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		1200000F /* VideoAudioExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoAudioExtractor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -120,6 +122,7 @@
 				12000004 /* StillImageVideoGenerator.swift */,
 				12000005 /* ReelVideoComposer.swift */,
 				12000006 /* PhotoLibrarySaver.swift */,
+				1200000F /* VideoAudioExtractor.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -230,6 +233,7 @@
 				11000004 /* StillImageVideoGenerator.swift in Sources */,
 				11000005 /* ReelVideoComposer.swift in Sources */,
 				11000006 /* PhotoLibrarySaver.swift in Sources */,
+				1100000F /* VideoAudioExtractor.swift in Sources */,
 				11000007 /* ReelCreatorViewModel.swift in Sources */,
 				11000008 /* ReelCreatorView.swift in Sources */,
 				11000009 /* ExportResultSheet.swift in Sources */,

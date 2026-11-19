@@ -31,6 +31,8 @@ final class ReelCreatorViewModel {
     var customAudioURL: URL?
     var customAudioName: String?
     var customAudioDurationSeconds: Double = 0
+    var customAudioThumbnail: UIImage?
+    var isExtractingAudio = false
 
     var outroType: OutroTypeChoice = .staticLogo
     var logoImage: UIImage?
@@ -52,7 +54,7 @@ final class ReelCreatorViewModel {
     var savedToPhotosSuccess = false
 
     var canGenerateReel: Bool {
-        guard !selectedItems.isEmpty, !isExporting else { return false }
+        guard !selectedItems.isEmpty, !isExporting, !isExtractingAudio else { return false }
         if audioChoice == .customTrack && customAudioURL == nil {
             return false
         }
@@ -70,8 +72,11 @@ final class ReelCreatorViewModel {
         if selectedItems.isEmpty {
             return "Select at least one photo or video to create a Reel."
         }
+        if isExtractingAudio {
+            return "Extracting audio from selected video..."
+        }
         if audioChoice == .customTrack && customAudioURL == nil {
-            return "Choose a custom audio file or switch back to No Music (Add in IG)."
+            return "Choose an audio file, extract audio from a video, or switch back to No Music (Add in IG)."
         }
         if outroType == .staticLogo && logoImage == nil {
             return "Pick your store logo image (PNG) or set Outro to None."
@@ -166,25 +171,64 @@ final class ReelCreatorViewModel {
     }
 
     func importAudioFile(url: URL) async {
+        guard !isExtractingAudio else { return }
         do {
             let localURL = try copySecurityScopedFileToTemp(url: url, prefix: "audio")
-            let asset = AVURLAsset(url: localURL)
-            let duration = try await asset.load(.duration)
-            let seconds = max(0.1, CMTimeGetSeconds(duration))
+            let seconds: Double
+            do {
+                let asset = AVURLAsset(url: localURL)
+                let duration = try await asset.load(.duration)
+                seconds = max(0.1, CMTimeGetSeconds(duration))
+            } catch {
+                removeTemporaryFileIfPresent(at: localURL)
+                throw error
+            }
 
+            let previousAudioURL = customAudioURL
             customAudioURL = localURL
             customAudioName = url.lastPathComponent
             customAudioDurationSeconds = seconds
+            customAudioThumbnail = nil
             audioChoice = .customTrack
+            removeTemporaryFileIfPresent(at: previousAudioURL)
         } catch {
             errorMessage = "Could not import audio file: \(error.localizedDescription)"
         }
     }
 
+    func extractAudioFromVideoItem(_ item: PhotosPickerItem?) async {
+        guard let item, !isExtractingAudio else { return }
+        isExtractingAudio = true
+        defer { isExtractingAudio = false }
+
+        do {
+            guard let movie = try await item.loadTransferable(type: MovieFileTransferable.self) else {
+                errorMessage = "Could not load the selected video from Photos."
+                return
+            }
+            defer { removeTemporaryFileIfPresent(at: movie.url) }
+
+            let extracted = try await VideoAudioExtractor.extractAudio(from: movie.url)
+            let thumbnail = await SelectedMediaItem.generateVideoThumbnail(url: movie.url)
+
+            let previousAudioURL = customAudioURL
+            customAudioURL = extracted.audioURL
+            customAudioName = "Audio from Video"
+            customAudioDurationSeconds = extracted.durationSeconds
+            customAudioThumbnail = thumbnail
+            audioChoice = .customTrack
+            removeTemporaryFileIfPresent(at: previousAudioURL)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func clearCustomAudio() {
+        removeTemporaryFileIfPresent(at: customAudioURL)
         customAudioURL = nil
         customAudioName = nil
         customAudioDurationSeconds = 0
+        customAudioThumbnail = nil
         audioChoice = .instagramAudio
         polishSettings.beatSyncEnabled = false
     }
@@ -341,6 +385,15 @@ final class ReelCreatorViewModel {
         }
         try FileManager.default.copyItem(at: url, to: destination)
         return destination
+    }
+
+    private func removeTemporaryFileIfPresent(at url: URL?) {
+        guard let url else { return }
+        let tempPath = FileManager.default.temporaryDirectory.standardizedFileURL.path
+        let filePath = url.standardizedFileURL.path
+        if filePath.hasPrefix(tempPath) {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     private func downscaledThumbnail(from image: UIImage) -> UIImage {

@@ -9,6 +9,7 @@ struct ReelCreatorView: View {
     @State private var mediaPickerItems: [PhotosPickerItem] = []
     @State private var logoPickerItem: PhotosPickerItem?
     @State private var outroVideoPickerItem: PhotosPickerItem?
+    @State private var audioVideoPickerItem: PhotosPickerItem?
 
     @State private var showAudioImporter = false
     @State private var showLogoFileImporter = false
@@ -48,6 +49,13 @@ struct ReelCreatorView: View {
                 Task {
                     await viewModel.loadOutroVideoItem(newItem)
                     outroVideoPickerItem = nil
+                }
+            }
+            .onChange(of: audioVideoPickerItem) { _, newItem in
+                guard let newItem else { return }
+                Task {
+                    await viewModel.extractAudioFromVideoItem(newItem)
+                    audioVideoPickerItem = nil
                 }
             }
             .fileImporter(
@@ -222,8 +230,24 @@ struct ReelCreatorView: View {
             if viewModel.audioChoice == .customTrack {
                 if let audioName = viewModel.customAudioName {
                     HStack {
-                        Image(systemName: "music.note")
-                            .foregroundStyle(.tint)
+                        if let thumbnail = viewModel.customAudioThumbnail {
+                            Image(uiImage: thumbnail)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 40, height: 40)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .overlay(alignment: .bottomTrailing) {
+                                    Image(systemName: "waveform")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .padding(3)
+                                        .background(.black.opacity(0.65), in: Circle())
+                                        .padding(2)
+                                }
+                        } else {
+                            Image(systemName: "music.note")
+                                .foregroundStyle(.tint)
+                        }
                         VStack(alignment: .leading) {
                             Text(audioName)
                                 .font(.subheadline.weight(.medium))
@@ -237,17 +261,42 @@ struct ReelCreatorView: View {
                             viewModel.clearCustomAudio()
                         }
                         .font(.caption)
+                        .disabled(viewModel.isExtractingAudio)
                     }
                 }
+
+                if viewModel.isExtractingAudio {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Extracting audio from video...")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                let hasCustomAudio = viewModel.customAudioName != nil
 
                 Button {
                     showAudioImporter = true
                 } label: {
                     Label(
-                        viewModel.customAudioName == nil ? "Choose Audio File (MP3 / M4A)" : "Replace Audio File",
+                        hasCustomAudio ? "Replace with Audio File" : "Choose Audio File (MP3 / M4A)",
                         systemImage: "folder"
                     )
                 }
+                .disabled(viewModel.isExtractingAudio)
+
+                PhotosPicker(
+                    selection: $audioVideoPickerItem,
+                    matching: .videos,
+                    photoLibrary: .shared()
+                ) {
+                    Label(
+                        hasCustomAudio ? "Replace with Video Audio" : "Extract Audio from Video",
+                        systemImage: "video"
+                    )
+                }
+                .disabled(viewModel.isExtractingAudio)
             }
         } header: {
             Text("2. Audio")
@@ -282,7 +331,7 @@ struct ReelCreatorView: View {
             }
 
             Toggle("Beat-Sync Photos to Audio", isOn: $viewModel.polishSettings.beatSyncEnabled)
-                .disabled(viewModel.audioChoice != .customTrack || viewModel.customAudioURL == nil)
+                .disabled(viewModel.audioChoice != .customTrack || viewModel.customAudioURL == nil || viewModel.isExtractingAudio)
         } header: {
             Text("3. Polish & Transitions")
         } footer: {

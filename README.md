@@ -7,7 +7,7 @@ An iOS SwiftUI application for turning selected iPhone photos and videos into 9:
 - **Photos & Videos Selection**: Multi-select photos and videos from your iPhone Photos library via `PhotosPicker`, reorder clips, and configure photo display duration.
 - **Audio Modes**:
   - **No Music (Add in IG)**: Keeps original video clip audio so you can attach trending music inside Instagram.
-  - **Custom Audio Track**: Import an audio track (MP3/M4A) from Files/iCloud, automatically muting original video clip audio and fading out at the end.
+  - **Custom Audio Track**: Import an audio track (MP3/M4A) from Files/iCloud or extract the audio track from a video in iPhone Photos, automatically muting original video clip audio and fading out at the end.
 - **Polish & Transitions**: Configurable crossfade transitions between clips and optional beat-sync (`Accelerate` / `vDSP_rmsqv` onset detection) that snaps photo durations to detected beats. Photos use static 1080×1920 center crop (no Ken Burns motion).
 - **Store Logo Outro**: Append either a static store logo image (PNG) centered over a custom branded background color or a pre-made outro video clip (`.mp4`/`.mov`).
 - **Export & Share**: Renders 1080×1920 `.mp4` on-device via `AVFoundation`, previews in-app, saves directly to iPhone Photos, and opens the iOS Share Sheet.
@@ -39,7 +39,8 @@ reels-creator/
     │   ├── AudioBeatDetector.swift
     │   ├── PhotoLibrarySaver.swift
     │   ├── ReelVideoComposer.swift
-    │   └── StillImageVideoGenerator.swift
+    │   ├── StillImageVideoGenerator.swift
+    │   └── VideoAudioExtractor.swift
     ├── ViewModels/
     │   └── ReelCreatorViewModel.swift
     ├── Views/
