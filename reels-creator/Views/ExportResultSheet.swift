@@ -1,3 +1,4 @@
+import AVFoundation
 import AVKit
 import SwiftUI
 
@@ -71,6 +72,8 @@ struct ExportResultSheet: View {
                 }
             }
             .onAppear {
+                try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+                try? AVAudioSession.sharedInstance().setActive(true)
                 let newPlayer = AVPlayer(url: videoURL)
                 player = newPlayer
                 newPlayer.play()
@@ -78,6 +81,7 @@ struct ExportResultSheet: View {
             .onDisappear {
                 player?.pause()
                 player = nil
+                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             }
         }
     }
