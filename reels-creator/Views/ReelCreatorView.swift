@@ -368,39 +368,41 @@ struct ReelCreatorView: View {
             case .none:
                 EmptyView()
 
-            case .staticLogo:
-                HStack(spacing: 14) {
-                    if let logo = viewModel.logoImage {
-                        Image(uiImage: logo)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 60, height: 60)
-                            .padding(6)
-                            .background(viewModel.outroBackgroundColor, in: RoundedRectangle(cornerRadius: 10))
-                    } else {
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.secondary.opacity(0.15))
-                            .frame(width: 60, height: 60)
-                            .overlay {
-                                Image(systemName: "photo")
-                                    .foregroundStyle(.secondary)
-                            }
-                    }
+            case .logoOverlay:
+                let hasLogo = viewModel.logoImage != nil
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        PhotosPicker(selection: $logoPickerItem, matching: .images) {
-                            Label("Pick Logo from Photos", systemImage: "photo")
-                        }
-                        Button {
-                            showLogoFileImporter = true
-                        } label: {
-                            Label("Pick PNG from Files", systemImage: "folder")
-                        }
-                    }
-                    .font(.subheadline)
+                if let logo = viewModel.logoImage {
+                    OutroLogoPreviewCard(
+                        logoImage: logo,
+                        backgroundThumbnail: viewModel.selectedItems.last?.thumbnail,
+                        durationSeconds: viewModel.outroDurationSeconds
+                    )
                 }
 
-                ColorPicker("Background Color", selection: $viewModel.outroBackgroundColor, supportsOpacity: false)
+                Label {
+                    Text(viewModel.isUsingDefaultLogo ? "Default (@snazzysboutique)" : "Custom Logo")
+                        .foregroundStyle(.secondary)
+                } icon: {
+                    Image(systemName: viewModel.isUsingDefaultLogo ? "checkmark.seal.fill" : "photo")
+                        .foregroundStyle(viewModel.isUsingDefaultLogo ? Color.accentColor : Color.secondary)
+                }
+                .font(.subheadline)
+
+                PhotosPicker(selection: $logoPickerItem, matching: .images) {
+                    Label(
+                        hasLogo ? "Replace Logo from Photos" : "Pick Logo from Photos",
+                        systemImage: "photo"
+                    )
+                }
+
+                Button {
+                    showLogoFileImporter = true
+                } label: {
+                    Label(
+                        hasLogo ? "Replace PNG from Files" : "Pick PNG from Files",
+                        systemImage: "folder"
+                    )
+                }
 
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
@@ -411,6 +413,13 @@ struct ReelCreatorView: View {
                             .monospacedDigit()
                     }
                     Slider(value: $viewModel.outroDurationSeconds, in: 1.0...4.0, step: 0.5)
+                }
+
+                if viewModel.isOutroLogoCustomized {
+                    Button("Reset to Default") {
+                        viewModel.resetOutroToDefault()
+                    }
+                    .font(.subheadline)
                 }
 
             case .videoClip:
@@ -440,6 +449,15 @@ struct ReelCreatorView: View {
             }
         } header: {
             Text("5. Store Logo Outro")
+        } footer: {
+            switch viewModel.outroType {
+            case .none:
+                Text("No outro overlay or clip will be added.")
+            case .logoOverlay:
+                Text("Defaults to @snazzysboutique for 2.0s. Fades in transparently over the end of the Reel without adding extra length.")
+            case .videoClip:
+                Text("Appends a pre-made outro video clip to the end of the Reel.")
+            }
         }
     }
 
@@ -512,11 +530,10 @@ struct ReelCreatorView: View {
     }
 }
 
-private struct IntroTextPreviewCard: View {
-    let text: String
+private struct ReelOverlayPreviewCard: View {
+    let overlayImage: UIImage?
     let backgroundThumbnail: UIImage?
-
-    @State private var overlayImage: UIImage?
+    let caption: String
 
     var body: some View {
         VStack(spacing: 8) {
@@ -546,12 +563,27 @@ private struct IntroTextPreviewCard: View {
             }
             .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
 
-            Text("Preview • Fades in & out over first 3.0s")
+            Text(caption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
+    }
+}
+
+private struct IntroTextPreviewCard: View {
+    let text: String
+    let backgroundThumbnail: UIImage?
+
+    @State private var overlayImage: UIImage?
+
+    var body: some View {
+        ReelOverlayPreviewCard(
+            overlayImage: overlayImage,
+            backgroundThumbnail: backgroundThumbnail,
+            caption: "Preview • Fades in & out over first 3.0s"
+        )
         .onAppear {
             refreshOverlay()
         }
@@ -564,6 +596,35 @@ private struct IntroTextPreviewCard: View {
         overlayImage = IntroTextOverlayRenderer.renderOverlayImage(
             text: text,
             canvasSize: IntroTextOverlayRenderer.previewCanvasSize
+        )
+    }
+}
+
+private struct OutroLogoPreviewCard: View {
+    let logoImage: UIImage
+    let backgroundThumbnail: UIImage?
+    let durationSeconds: Double
+
+    @State private var overlayImage: UIImage?
+
+    var body: some View {
+        ReelOverlayPreviewCard(
+            overlayImage: overlayImage,
+            backgroundThumbnail: backgroundThumbnail,
+            caption: String(format: "Preview • Fades in over last %.1fs", durationSeconds)
+        )
+        .onAppear {
+            refreshOverlay()
+        }
+        .onChange(of: logoImage) { _, _ in
+            refreshOverlay()
+        }
+    }
+
+    private func refreshOverlay() {
+        overlayImage = OutroLogoOverlayRenderer.renderOverlayImage(
+            logo: logoImage,
+            canvasSize: OutroLogoOverlayRenderer.previewCanvasSize
         )
     }
 }

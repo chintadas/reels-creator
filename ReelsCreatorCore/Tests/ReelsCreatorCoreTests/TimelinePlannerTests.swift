@@ -137,7 +137,7 @@ final class TimelinePlannerTests: XCTestCase {
         XCTAssertEqual(timeline.segments[2].durationSeconds, 2.4, accuracy: 0.0001)
     }
 
-    func testAppendingStaticLogoAndVideoOutroSegments() {
+    func testLogoOverlayAndVideoOutroTimelineBehavior() throws {
         let clips = [
             MediaClipSpec(kind: .photo, sourceDurationSeconds: 2.0)
         ]
@@ -147,19 +147,21 @@ final class TimelinePlannerTests: XCTestCase {
             beatSyncEnabled: false
         )
 
-        let staticTimeline = TimelinePlanner.plan(
+        let logoOverlayTimeline = TimelinePlanner.plan(
             clips: clips,
             audio: .none,
-            outro: .staticLogo(backgroundColorHex: "#112233", durationSeconds: 2.0),
+            outro: .logoOverlay(durationSeconds: 2.0),
             settings: settings
         )
 
-        XCTAssertEqual(staticTimeline.segments.count, 2)
-        XCTAssertFalse(staticTimeline.segments[0].isOutro)
-        XCTAssertTrue(staticTimeline.segments[1].isOutro)
-        XCTAssertFalse(staticTimeline.segments[1].keepOriginalAudio)
-        XCTAssertEqual(staticTimeline.segments[1].durationSeconds, 2.0, accuracy: 0.0001)
-        XCTAssertEqual(staticTimeline.totalDurationSeconds, 3.7, accuracy: 0.0001)
+        XCTAssertEqual(logoOverlayTimeline.segments.count, 1)
+        XCTAssertFalse(logoOverlayTimeline.segments[0].isOutro)
+        XCTAssertEqual(logoOverlayTimeline.totalDurationSeconds, 2.0, accuracy: 0.0001)
+        let outroOverlay = try XCTUnwrap(logoOverlayTimeline.outroLogoOverlay)
+        XCTAssertEqual(outroOverlay.startTimeSeconds, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(outroOverlay.durationSeconds, 2.0, accuracy: 0.0001)
+        XCTAssertEqual(outroOverlay.endTimeSeconds, 2.0, accuracy: 0.0001)
+        XCTAssertEqual(outroOverlay.fadeInDurationSeconds, 0.3, accuracy: 0.0001)
 
         let videoOutroTimeline = TimelinePlanner.plan(
             clips: clips,
@@ -172,6 +174,7 @@ final class TimelinePlannerTests: XCTestCase {
         XCTAssertTrue(videoOutroTimeline.segments[1].isOutro)
         XCTAssertTrue(videoOutroTimeline.segments[1].keepOriginalAudio)
         XCTAssertEqual(videoOutroTimeline.totalDurationSeconds, 4.7, accuracy: 0.0001)
+        XCTAssertNil(videoOutroTimeline.outroLogoOverlay)
     }
 
     func testOriginalVideoAudioMutedWhenCustomAudioSelectedAndPreservedWhenNone() {
@@ -256,7 +259,7 @@ final class TimelinePlannerTests: XCTestCase {
         XCTAssertEqual(overlay.fadeOutDurationSeconds, 0.4, accuracy: 0.0001)
     }
 
-    func testIntroOverlayStopsBeforeOutroWithAndWithoutCrossfade() throws {
+    func testIntroOverlayStopsBeforeVideoOutroWithAndWithoutCrossfade() throws {
         let clips = [
             MediaClipSpec(kind: .photo, sourceDurationSeconds: 2.0)
         ]
@@ -266,7 +269,7 @@ final class TimelinePlannerTests: XCTestCase {
         let noCrossfadeTimeline = TimelinePlanner.plan(
             clips: clips,
             audio: .none,
-            outro: .staticLogo(backgroundColorHex: "#000000", durationSeconds: 2.0),
+            outro: .videoClip(durationSeconds: 2.0),
             settings: noCrossfadeSettings,
             introOverlay: spec
         )
@@ -280,7 +283,7 @@ final class TimelinePlannerTests: XCTestCase {
         let crossfadeTimeline = TimelinePlanner.plan(
             clips: clips,
             audio: .none,
-            outro: .staticLogo(backgroundColorHex: "#000000", durationSeconds: 2.0),
+            outro: .videoClip(durationSeconds: 2.0),
             settings: crossfadeSettings,
             introOverlay: spec
         )
@@ -311,5 +314,137 @@ final class TimelinePlannerTests: XCTestCase {
         XCTAssertEqual(overlay.fadeInDurationSeconds + overlay.fadeOutDurationSeconds, 0.5, accuracy: 0.0001)
         XCTAssertEqual(overlay.fadeInDurationSeconds, 0.5 * (0.3 / 0.7), accuracy: 0.0001)
         XCTAssertEqual(overlay.fadeOutDurationSeconds, 0.5 * (0.4 / 0.7), accuracy: 0.0001)
+    }
+
+    func testLogoOverlaySpansLastTwoSecondsWithoutExtendingDuration() throws {
+        let clips = [
+            MediaClipSpec(kind: .photo, sourceDurationSeconds: 3.0),
+            MediaClipSpec(kind: .video, sourceDurationSeconds: 3.0)
+        ]
+
+        let noCrossfade = TimelinePlanner.plan(
+            clips: clips,
+            audio: .none,
+            outro: .logoOverlay(durationSeconds: 2.0),
+            settings: ReelPolishSettings(crossfadeEnabled: false)
+        )
+        XCTAssertEqual(noCrossfade.segments.count, 2)
+        XCTAssertEqual(noCrossfade.totalDurationSeconds, 6.0, accuracy: 0.0001)
+        let noCrossfadeLogo = try XCTUnwrap(noCrossfade.outroLogoOverlay)
+        XCTAssertEqual(noCrossfadeLogo.startTimeSeconds, 4.0, accuracy: 0.0001)
+        XCTAssertEqual(noCrossfadeLogo.durationSeconds, 2.0, accuracy: 0.0001)
+        XCTAssertEqual(noCrossfadeLogo.endTimeSeconds, 6.0, accuracy: 0.0001)
+        XCTAssertEqual(noCrossfadeLogo.fadeInDurationSeconds, 0.3, accuracy: 0.0001)
+
+        let withCrossfade = TimelinePlanner.plan(
+            clips: clips,
+            audio: .none,
+            outro: .logoOverlay(durationSeconds: 2.0),
+            settings: ReelPolishSettings(crossfadeEnabled: true, crossfadeDuration: 0.4)
+        )
+        XCTAssertEqual(withCrossfade.segments.count, 2)
+        XCTAssertEqual(withCrossfade.totalDurationSeconds, 5.6, accuracy: 0.0001)
+        let withCrossfadeLogo = try XCTUnwrap(withCrossfade.outroLogoOverlay)
+        XCTAssertEqual(withCrossfadeLogo.startTimeSeconds, 3.6, accuracy: 0.0001)
+        XCTAssertEqual(withCrossfadeLogo.durationSeconds, 2.0, accuracy: 0.0001)
+        XCTAssertEqual(withCrossfadeLogo.endTimeSeconds, 5.6, accuracy: 0.0001)
+    }
+
+    func testLogoOverlayClampsForShortAndUltraShortReels() throws {
+        let shortTimeline = TimelinePlanner.plan(
+            clips: [MediaClipSpec(kind: .photo, sourceDurationSeconds: 1.2)],
+            audio: .none,
+            outro: .logoOverlay(durationSeconds: 2.0),
+            settings: ReelPolishSettings(crossfadeEnabled: false)
+        )
+        let shortLogo = try XCTUnwrap(shortTimeline.outroLogoOverlay)
+        XCTAssertEqual(shortLogo.startTimeSeconds, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(shortLogo.durationSeconds, 1.2, accuracy: 0.0001)
+        XCTAssertEqual(shortLogo.fadeInDurationSeconds, 0.3, accuracy: 0.0001)
+
+        let ultraShortTimeline = TimelinePlanner.plan(
+            clips: [MediaClipSpec(kind: .photo, sourceDurationSeconds: 0.2)],
+            audio: .none,
+            outro: .logoOverlay(durationSeconds: 2.0),
+            settings: ReelPolishSettings(crossfadeEnabled: false)
+        )
+        let ultraShortLogo = try XCTUnwrap(ultraShortTimeline.outroLogoOverlay)
+        XCTAssertEqual(ultraShortLogo.startTimeSeconds, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(ultraShortLogo.durationSeconds, 0.2, accuracy: 0.0001)
+        XCTAssertEqual(ultraShortLogo.fadeInDurationSeconds, 0.2, accuracy: 0.0001)
+    }
+
+    func testLogoOverlayReturnsNilForEmptyClips() {
+        let timeline = TimelinePlanner.plan(
+            clips: [],
+            audio: .none,
+            outro: .logoOverlay(durationSeconds: 2.0),
+            settings: ReelPolishSettings(crossfadeEnabled: false)
+        )
+
+        XCTAssertEqual(timeline.totalDurationSeconds, 0.0, accuracy: 0.0001)
+        XCTAssertNil(timeline.outroLogoOverlay)
+        XCTAssertNil(timeline.introOverlay)
+    }
+
+    func testIntroOverlayAndLogoOverlayAvoidOverlap() throws {
+        let spec = try XCTUnwrap(IntroTextOverlaySpec(rawText: "New Drop"))
+        let settings = ReelPolishSettings(crossfadeEnabled: false)
+
+        // Long Reel (6.0s): intro [0.0, 3.0], outro [4.0, 6.0]
+        let longTimeline = TimelinePlanner.plan(
+            clips: [
+                MediaClipSpec(kind: .photo, sourceDurationSeconds: 3.0),
+                MediaClipSpec(kind: .photo, sourceDurationSeconds: 3.0)
+            ],
+            audio: .none,
+            outro: .logoOverlay(durationSeconds: 2.0),
+            settings: settings,
+            introOverlay: spec
+        )
+        let longIntro = try XCTUnwrap(longTimeline.introOverlay)
+        let longOutro = try XCTUnwrap(longTimeline.outroLogoOverlay)
+        XCTAssertEqual(longIntro.startTimeSeconds, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(longIntro.endTimeSeconds, 3.0, accuracy: 0.0001)
+        XCTAssertEqual(longOutro.startTimeSeconds, 4.0, accuracy: 0.0001)
+        XCTAssertEqual(longOutro.endTimeSeconds, 6.0, accuracy: 0.0001)
+
+        // Medium/short Reel (4.0s): intro trimmed to [0.0, 2.0], outro [2.0, 4.0]
+        let mediumTimeline = TimelinePlanner.plan(
+            clips: [
+                MediaClipSpec(kind: .photo, sourceDurationSeconds: 2.0),
+                MediaClipSpec(kind: .photo, sourceDurationSeconds: 2.0)
+            ],
+            audio: .none,
+            outro: .logoOverlay(durationSeconds: 2.0),
+            settings: settings,
+            introOverlay: spec
+        )
+        let mediumIntro = try XCTUnwrap(mediumTimeline.introOverlay)
+        let mediumOutro = try XCTUnwrap(mediumTimeline.outroLogoOverlay)
+        XCTAssertEqual(mediumIntro.startTimeSeconds, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(mediumIntro.durationSeconds, 2.0, accuracy: 0.0001)
+        XCTAssertEqual(mediumIntro.endTimeSeconds, mediumOutro.startTimeSeconds, accuracy: 0.0001)
+        XCTAssertEqual(mediumOutro.startTimeSeconds, 2.0, accuracy: 0.0001)
+        XCTAssertEqual(mediumOutro.endTimeSeconds, 4.0, accuracy: 0.0001)
+
+        // Very short Reel (1.5s <= 2.0s): intro omitted, outro [0.0, 1.5]
+        let veryShortTimeline = TimelinePlanner.plan(
+            clips: [MediaClipSpec(kind: .photo, sourceDurationSeconds: 1.5)],
+            audio: .none,
+            outro: .logoOverlay(durationSeconds: 2.0),
+            settings: settings,
+            introOverlay: spec
+        )
+        XCTAssertNil(veryShortTimeline.introOverlay)
+        let veryShortOutro = try XCTUnwrap(veryShortTimeline.outroLogoOverlay)
+        XCTAssertEqual(veryShortOutro.startTimeSeconds, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(veryShortOutro.durationSeconds, 1.5, accuracy: 0.0001)
+        XCTAssertEqual(veryShortOutro.endTimeSeconds, 1.5, accuracy: 0.0001)
+    }
+
+    func testDefaultPolishSettingsPhotoDuration() {
+        let settings = ReelPolishSettings()
+        XCTAssertEqual(settings.defaultPhotoDuration, 1.5, accuracy: 0.0001)
     }
 }

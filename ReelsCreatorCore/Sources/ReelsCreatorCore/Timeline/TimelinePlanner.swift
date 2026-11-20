@@ -64,25 +64,48 @@ public struct PlannedIntroOverlay: Equatable, Sendable {
     }
 }
 
+public struct PlannedOutroLogoOverlay: Equatable, Sendable {
+    public let startTimeSeconds: Double
+    public let durationSeconds: Double
+    public let fadeInDurationSeconds: Double
+
+    public init(
+        startTimeSeconds: Double,
+        durationSeconds: Double,
+        fadeInDurationSeconds: Double
+    ) {
+        self.startTimeSeconds = startTimeSeconds
+        self.durationSeconds = durationSeconds
+        self.fadeInDurationSeconds = fadeInDurationSeconds
+    }
+
+    public var endTimeSeconds: Double {
+        startTimeSeconds + durationSeconds
+    }
+}
+
 public struct PlannedTimeline: Equatable, Sendable {
     public let segments: [PlannedSegment]
     public let totalDurationSeconds: Double
     public let muteOriginalVideoClips: Bool
     public let backgroundAudioDurationSeconds: Double?
     public let introOverlay: PlannedIntroOverlay?
+    public let outroLogoOverlay: PlannedOutroLogoOverlay?
 
     public init(
         segments: [PlannedSegment],
         totalDurationSeconds: Double,
         muteOriginalVideoClips: Bool,
         backgroundAudioDurationSeconds: Double?,
-        introOverlay: PlannedIntroOverlay? = nil
+        introOverlay: PlannedIntroOverlay? = nil,
+        outroLogoOverlay: PlannedOutroLogoOverlay? = nil
     ) {
         self.segments = segments
         self.totalDurationSeconds = totalDurationSeconds
         self.muteOriginalVideoClips = muteOriginalVideoClips
         self.backgroundAudioDurationSeconds = backgroundAudioDurationSeconds
         self.introOverlay = introOverlay
+        self.outroLogoOverlay = outroLogoOverlay
     }
 }
 
@@ -117,6 +140,30 @@ public enum TimelinePlanner {
             durationSeconds: effectiveDuration,
             fadeInDurationSeconds: fadeIn,
             fadeOutDurationSeconds: fadeOut
+        )
+    }
+
+    public static func resolveOutroLogoOverlay(
+        durationSeconds: Double,
+        fadeInDurationSeconds: Double,
+        totalDurationSeconds: Double
+    ) -> PlannedOutroLogoOverlay? {
+        guard durationSeconds > 0, totalDurationSeconds > 0.01 else {
+            return nil
+        }
+
+        let effectiveDuration = min(durationSeconds, totalDurationSeconds)
+        guard effectiveDuration > 0.01 else {
+            return nil
+        }
+
+        let startTimeSeconds = max(0.0, totalDurationSeconds - effectiveDuration)
+        let clampedFadeIn = min(max(0.0, fadeInDurationSeconds), effectiveDuration)
+
+        return PlannedOutroLogoOverlay(
+            startTimeSeconds: startTimeSeconds,
+            durationSeconds: effectiveDuration,
+            fadeInDurationSeconds: clampedFadeIn
         )
     }
 
@@ -157,17 +204,8 @@ public enum TimelinePlanner {
         }
 
         switch outro {
-        case .none:
+        case .none, .logoOverlay:
             break
-        case .staticLogo(_, let durationSeconds):
-            rawSpecs.append(
-                RawSegmentSpec(
-                    id: UUID(),
-                    durationSeconds: max(0.2, durationSeconds),
-                    isOutro: true,
-                    keepOriginalAudio: false
-                )
-            )
         case .videoClip(let durationSeconds):
             rawSpecs.append(
                 RawSegmentSpec(
@@ -228,9 +266,22 @@ public enum TimelinePlanner {
             currentEndTime = segment.endTimeSeconds
         }
 
+        let plannedOutroLogoOverlay: PlannedOutroLogoOverlay?
+        if case .logoOverlay(let durationSeconds, let fadeInDurationSeconds) = outro {
+            plannedOutroLogoOverlay = resolveOutroLogoOverlay(
+                durationSeconds: durationSeconds,
+                fadeInDurationSeconds: fadeInDurationSeconds,
+                totalDurationSeconds: currentEndTime
+            )
+        } else {
+            plannedOutroLogoOverlay = nil
+        }
+
         let maxIntroEnd: Double
         if let outroSegment = plannedSegments.first(where: { $0.isOutro }) {
             maxIntroEnd = outroSegment.startTimeSeconds
+        } else if let plannedOutroLogoOverlay {
+            maxIntroEnd = plannedOutroLogoOverlay.startTimeSeconds
         } else {
             maxIntroEnd = currentEndTime
         }
@@ -241,7 +292,8 @@ public enum TimelinePlanner {
             totalDurationSeconds: currentEndTime,
             muteOriginalVideoClips: muteOriginalVideoClips,
             backgroundAudioDurationSeconds: backgroundAudioDurationSeconds,
-            introOverlay: plannedIntroOverlay
+            introOverlay: plannedIntroOverlay,
+            outroLogoOverlay: plannedOutroLogoOverlay
         )
     }
 }

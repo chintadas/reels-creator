@@ -5,8 +5,6 @@ import UIKit
 enum StillImageLayoutMode {
     /// Static aspect-fill center crop to 1080x1920 (no Ken Burns motion).
     case aspectFillCrop
-    /// Aspect-fit centered inside 1080x1920 over a solid branded background color.
-    case aspectFitCentered(backgroundColor: UIColor)
 }
 
 enum StillImageVideoGenerator {
@@ -174,14 +172,6 @@ enum StillImageVideoGenerator {
 
                 let drawRect = aspectFillRect(for: image.size, inside: bounds)
                 image.draw(in: drawRect)
-
-            case .aspectFitCentered(let backgroundColor):
-                backgroundColor.setFill()
-                context.fill(bounds)
-
-                let paddedBounds = bounds.insetBy(dx: 140, dy: 240)
-                let drawRect = aspectFitRect(for: image.size, inside: paddedBounds)
-                image.draw(in: drawRect)
             }
         }
 
@@ -253,19 +243,6 @@ enum StillImageVideoGenerator {
     private static func aspectFillRect(for imageSize: CGSize, inside container: CGRect) -> CGRect {
         guard imageSize.width > 0, imageSize.height > 0 else { return container }
         let scale = max(container.width / imageSize.width, container.height / imageSize.height)
-        let width = imageSize.width * scale
-        let height = imageSize.height * scale
-        return CGRect(
-            x: container.midX - width / 2.0,
-            y: container.midY - height / 2.0,
-            width: width,
-            height: height
-        )
-    }
-
-    private static func aspectFitRect(for imageSize: CGSize, inside container: CGRect) -> CGRect {
-        guard imageSize.width > 0, imageSize.height > 0 else { return container }
-        let scale = min(container.width / imageSize.width, container.height / imageSize.height)
         let width = imageSize.width * scale
         let height = imageSize.height * scale
         return CGRect(

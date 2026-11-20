@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import QuartzCore
 import ReelsCreatorCore
 import UIKit
 
@@ -8,7 +9,6 @@ struct ReelCompositionRequest {
     let audioMode: AudioSelectionMode
     let outroMode: OutroSelectionMode
     let outroLogoImage: UIImage?
-    let outroBackgroundColor: UIColor
     let outroVideoURL: URL?
     let polishSettings: ReelPolishSettings
     let introOverlay: IntroTextOverlaySpec?
@@ -18,7 +18,6 @@ struct ReelCompositionRequest {
         audioMode: AudioSelectionMode,
         outroMode: OutroSelectionMode,
         outroLogoImage: UIImage?,
-        outroBackgroundColor: UIColor,
         outroVideoURL: URL?,
         polishSettings: ReelPolishSettings,
         introOverlay: IntroTextOverlaySpec? = nil
@@ -27,7 +26,6 @@ struct ReelCompositionRequest {
         self.audioMode = audioMode
         self.outroMode = outroMode
         self.outroLogoImage = outroLogoImage
-        self.outroBackgroundColor = outroBackgroundColor
         self.outroVideoURL = outroVideoURL
         self.polishSettings = polishSettings
         self.introOverlay = introOverlay
@@ -56,7 +54,7 @@ enum ReelVideoComposer {
             case .missingVideoTrack(let title):
                 return "The clip \"\(title)\" does not contain a valid video track."
             case .missingOutroLogoImage:
-                return "Please select a store logo image for the static logo outro."
+                return "Please select a store logo image for the logo overlay outro."
             case .missingOutroVideoURL:
                 return "Please select an outro video file."
             case .exportSessionCreationFailed:
@@ -131,11 +129,11 @@ enum ReelVideoComposer {
         switch request.outroMode {
         case .none:
             effectiveOutroMode = .none
-        case .staticLogo(let hex, let duration):
+        case .logoOverlay(let duration, let fadeIn):
             guard request.outroLogoImage != nil else {
                 throw ComposerError.missingOutroLogoImage
             }
-            effectiveOutroMode = .staticLogo(backgroundColorHex: hex, durationSeconds: duration)
+            effectiveOutroMode = .logoOverlay(durationSeconds: duration, fadeInDurationSeconds: fadeIn)
         case .videoClip:
             guard let outroURL = request.outroVideoURL else {
                 throw ComposerError.missingOutroVideoURL
@@ -203,22 +201,8 @@ enum ReelVideoComposer {
 
             if segment.isOutro {
                 switch effectiveOutroMode {
-                case .none:
+                case .none, .logoOverlay:
                     continue
-                case .staticLogo:
-                    guard let logoImage = request.outroLogoImage else {
-                        throw ComposerError.missingOutroLogoImage
-                    }
-                    await statusHandler("Rendering store logo outro...")
-                    let outroClipURL = workingDirectory.appendingPathComponent("outro-logo.mp4")
-                    try await StillImageVideoGenerator.generateVideo(
-                        from: logoImage,
-                        durationSeconds: segment.durationSeconds,
-                        layoutMode: .aspectFitCentered(backgroundColor: request.outroBackgroundColor),
-                        outputURL: outroClipURL
-                    )
-                    segmentAsset = AVURLAsset(url: outroClipURL)
-                    segmentTitle = "Store Logo Outro"
                 case .videoClip:
                     guard let outroAsset = outroVideoAsset else {
                         throw ComposerError.missingOutroVideoURL
@@ -376,20 +360,54 @@ enum ReelVideoComposer {
         await statusHandler("Encoding 9:16 Reel...")
         let videoComposition = buildVideoComposition(for: resolvedSegments, totalDuration: videoEnd)
 
+        let actualTotalSeconds = CMTimeGetSeconds(videoEnd)
+        let resolvedOutroLogoOverlay: PlannedOutroLogoOverlay?
+        if case .logoOverlay(let duration, let fadeIn) = effectiveOutroMode {
+            resolvedOutroLogoOverlay = TimelinePlanner.resolveOutroLogoOverlay(
+                durationSeconds: duration,
+                fadeInDurationSeconds: fadeIn,
+                totalDurationSeconds: actualTotalSeconds
+            )
+        } else {
+            resolvedOutroLogoOverlay = nil
+        }
+
         let actualMaxIntroEndSeconds: Double
         if let outroSegment = resolvedSegments.first(where: { $0.planned.isOutro }) {
             actualMaxIntroEndSeconds = CMTimeGetSeconds(outroSegment.startTime)
+        } else if let resolvedOutroLogoOverlay {
+            actualMaxIntroEndSeconds = resolvedOutroLogoOverlay.startTimeSeconds
         } else {
-            actualMaxIntroEndSeconds = CMTimeGetSeconds(videoEnd)
+            actualMaxIntroEndSeconds = actualTotalSeconds
         }
+
+        var overlayLayers: [CALayer] = []
         if let resolvedIntroOverlay = TimelinePlanner.resolveIntroOverlay(
             request.introOverlay,
             maxEndTimeSeconds: actualMaxIntroEndSeconds
+        ),
+           let introLayer = IntroTextOverlayRenderer.makeOverlayLayer(
+               for: resolvedIntroOverlay,
+               renderSize: renderSize
+           ) {
+            overlayLayers.append(introLayer)
+        }
+
+        if let resolvedOutroLogoOverlay,
+           let logoImage = request.outroLogoImage,
+           let outroLogoLayer = OutroLogoOverlayRenderer.makeOverlayLayer(
+               logo: logoImage,
+               overlay: resolvedOutroLogoOverlay,
+               renderSize: renderSize
+           ) {
+            overlayLayers.append(outroLogoLayer)
+        }
+
+        if let animationTool = IntroTextOverlayRenderer.makeAnimationTool(
+            overlayLayers: overlayLayers,
+            renderSize: renderSize
         ) {
-            videoComposition.animationTool = IntroTextOverlayRenderer.makeAnimationTool(
-                for: resolvedIntroOverlay,
-                renderSize: renderSize
-            )
+            videoComposition.animationTool = animationTool
         }
 
         let outputURL = FileManager.default.temporaryDirectory

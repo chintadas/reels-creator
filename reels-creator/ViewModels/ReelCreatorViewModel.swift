@@ -15,7 +15,7 @@ enum AudioSourceChoice: String, CaseIterable, Identifiable {
 
 enum OutroTypeChoice: String, CaseIterable, Identifiable {
     case none = "None"
-    case staticLogo = "Static Logo"
+    case logoOverlay = "Logo Overlay"
     case videoClip = "Outro Video"
 
     var id: String { rawValue }
@@ -24,6 +24,13 @@ enum OutroTypeChoice: String, CaseIterable, Identifiable {
 @MainActor
 @Observable
 final class ReelCreatorViewModel {
+    static let defaultLogoAssetName = "DefaultOutroLogo"
+    static let defaultOutroDurationSeconds: Double = OutroSelectionMode.defaultLogoOverlayDurationSeconds
+
+    static func loadDefaultLogoImage() -> UIImage? {
+        UIImage(named: defaultLogoAssetName)
+    }
+
     var selectedItems: [SelectedMediaItem] = []
     var isLoadingMedia = false
 
@@ -34,10 +41,10 @@ final class ReelCreatorViewModel {
     var customAudioThumbnail: UIImage?
     var isExtractingAudio = false
 
-    var outroType: OutroTypeChoice = .staticLogo
-    var logoImage: UIImage?
-    var outroBackgroundColor: Color = .black
-    var outroDurationSeconds: Double = 2.0
+    var outroType: OutroTypeChoice = .logoOverlay
+    var logoImage: UIImage? = ReelCreatorViewModel.loadDefaultLogoImage()
+    var isUsingDefaultLogo: Bool = true
+    var outroDurationSeconds: Double = ReelCreatorViewModel.defaultOutroDurationSeconds
     var outroVideoURL: URL?
     var outroVideoName: String?
     var outroVideoDurationSeconds: Double = 0
@@ -58,6 +65,10 @@ final class ReelCreatorViewModel {
     var isSavingToPhotos = false
     var savedToPhotosSuccess = false
 
+    var isOutroLogoCustomized: Bool {
+        !isUsingDefaultLogo || abs(outroDurationSeconds - Self.defaultOutroDurationSeconds) > 0.001
+    }
+
     var canGenerateReel: Bool {
         guard !selectedItems.isEmpty, !isExporting, !isExtractingAudio else { return false }
         if audioChoice == .customTrack && customAudioURL == nil {
@@ -66,7 +77,7 @@ final class ReelCreatorViewModel {
         switch outroType {
         case .none:
             return true
-        case .staticLogo:
+        case .logoOverlay:
             return logoImage != nil
         case .videoClip:
             return outroVideoURL != nil
@@ -83,7 +94,7 @@ final class ReelCreatorViewModel {
         if audioChoice == .customTrack && customAudioURL == nil {
             return "Extract audio from a video or switch back to No Music (Add in IG)."
         }
-        if outroType == .staticLogo && logoImage == nil {
+        if outroType == .logoOverlay && logoImage == nil {
             return "Pick your store logo image (PNG) or set Outro to None."
         }
         if outroType == .videoClip && outroVideoURL == nil {
@@ -223,7 +234,8 @@ final class ReelCreatorViewModel {
             if let data = try await item.loadTransferable(type: Data.self),
                let image = UIImage(data: data) {
                 logoImage = image
-                outroType = .staticLogo
+                isUsingDefaultLogo = false
+                outroType = .logoOverlay
             }
         } catch {
             errorMessage = "Could not load logo image: \(error.localizedDescription)"
@@ -233,16 +245,25 @@ final class ReelCreatorViewModel {
     func importLogoFile(url: URL) {
         do {
             let localURL = try copySecurityScopedFileToTemp(url: url, prefix: "logo")
+            defer { removeTemporaryFileIfPresent(at: localURL) }
             let data = try Data(contentsOf: localURL)
             if let image = UIImage(data: data) {
                 logoImage = image
-                outroType = .staticLogo
+                isUsingDefaultLogo = false
+                outroType = .logoOverlay
             } else {
                 errorMessage = "The selected file is not a supported image."
             }
         } catch {
             errorMessage = "Could not import logo file: \(error.localizedDescription)"
         }
+    }
+
+    func resetOutroToDefault() {
+        logoImage = Self.loadDefaultLogoImage()
+        isUsingDefaultLogo = true
+        outroDurationSeconds = Self.defaultOutroDurationSeconds
+        outroType = .logoOverlay
     }
 
     func importOutroVideo(url: URL) async {
@@ -294,7 +315,6 @@ final class ReelCreatorViewModel {
             audioMode: resolvedAudioMode(),
             outroMode: resolvedOutroMode(),
             outroLogoImage: logoImage,
-            outroBackgroundColor: UIColor(outroBackgroundColor),
             outroVideoURL: outroVideoURL,
             polishSettings: polishSettings,
             introOverlay: resolvedIntroOverlaySpec
@@ -340,11 +360,8 @@ final class ReelCreatorViewModel {
         switch outroType {
         case .none:
             return .none
-        case .staticLogo:
-            return .staticLogo(
-                backgroundColorHex: hexString(from: outroBackgroundColor),
-                durationSeconds: outroDurationSeconds
-            )
+        case .logoOverlay:
+            return .logoOverlay(durationSeconds: outroDurationSeconds)
         case .videoClip:
             return .videoClip(durationSeconds: max(0.2, outroVideoDurationSeconds))
         }
@@ -392,20 +409,5 @@ final class ReelCreatorViewModel {
             let h = image.size.height * scale
             image.draw(in: CGRect(x: (targetSize.width - w) / 2, y: (targetSize.height - h) / 2, width: w, height: h))
         }
-    }
-
-    private func hexString(from color: Color) -> String {
-        let uiColor = UIColor(color)
-        var r: CGFloat = 0
-        var g: CGFloat = 0
-        var b: CGFloat = 0
-        var a: CGFloat = 0
-        uiColor.getRed(&r, green: &g, blue: &b, alpha: &a)
-        return String(
-            format: "#%02X%02X%02X",
-            Int(round(r * 255)),
-            Int(round(g * 255)),
-            Int(round(b * 255))
-        )
     }
 }

@@ -57,13 +57,47 @@ enum IntroTextOverlayRenderer {
         }
     }
 
+    static func makeOverlayLayer(
+        for overlay: PlannedIntroOverlay,
+        renderSize: CGSize = reelRenderSize
+    ) -> CALayer? {
+        guard overlay.durationSeconds > 0,
+              let overlayImage = renderOverlayImage(text: overlay.text, canvasSize: renderSize),
+              let cgImage = overlayImage.cgImage else {
+            return nil
+        }
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+
+        let overlayLayer = CALayer()
+        overlayLayer.frame = CGRect(origin: .zero, size: renderSize)
+        overlayLayer.contents = cgImage
+        overlayLayer.contentsScale = 1.0
+        overlayLayer.contentsGravity = .resize
+        overlayLayer.opacity = 0.0
+
+        let animation = makeOpacityAnimation(for: overlay)
+        overlayLayer.add(animation, forKey: "introTextOpacity")
+        return overlayLayer
+    }
+
     static func makeAnimationTool(
         for overlay: PlannedIntroOverlay,
         renderSize: CGSize = reelRenderSize
     ) -> AVVideoCompositionCoreAnimationTool? {
-        guard overlay.durationSeconds > 0,
-              let overlayImage = renderOverlayImage(text: overlay.text, canvasSize: renderSize),
-              let cgImage = overlayImage.cgImage else {
+        guard let overlayLayer = makeOverlayLayer(for: overlay, renderSize: renderSize) else {
+            return nil
+        }
+        return makeAnimationTool(overlayLayers: [overlayLayer], renderSize: renderSize)
+    }
+
+    static func makeAnimationTool(
+        overlayLayers: [CALayer],
+        renderSize: CGSize = reelRenderSize
+    ) -> AVVideoCompositionCoreAnimationTool? {
+        guard !overlayLayers.isEmpty else {
             return nil
         }
 
@@ -79,18 +113,10 @@ enum IntroTextOverlayRenderer {
         let videoLayer = CALayer()
         videoLayer.frame = bounds
 
-        let overlayLayer = CALayer()
-        overlayLayer.frame = bounds
-        overlayLayer.contents = cgImage
-        overlayLayer.contentsScale = 1.0
-        overlayLayer.contentsGravity = .resize
-        overlayLayer.opacity = 0.0
-
-        let animation = makeOpacityAnimation(for: overlay)
-        overlayLayer.add(animation, forKey: "introTextOpacity")
-
         parentLayer.addSublayer(videoLayer)
-        parentLayer.addSublayer(overlayLayer)
+        for overlayLayer in overlayLayers {
+            parentLayer.addSublayer(overlayLayer)
+        }
 
         return AVVideoCompositionCoreAnimationTool(
             postProcessingAsVideoLayer: videoLayer,

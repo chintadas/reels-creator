@@ -10,7 +10,7 @@ An iOS SwiftUI application for turning selected iPhone photos and videos into 9:
   - **Custom Audio Track**: Extract the audio track from a video in iPhone Photos, automatically muting original video clip audio and fading out at the end.
 - **Polish & Transitions**: Configurable crossfade transitions between clips and optional beat-sync (`Accelerate` / `vDSP_rmsqv` onset detection) that snaps photo durations to detected beats. Photos use static 1080×1920 center crop (no Ken Burns motion).
 - **Intro Text Overlay**: Optional 3-second white centered multi-line intro text with soft drop shadow, live 9:16 preview, and smooth fade-in/fade-out over opening clips (stops automatically before any outro).
-- **Store Logo Outro**: Append either a static store logo image (PNG) centered over a custom branded background color or a pre-made outro video clip (`.mp4`/`.mov`).
+- **Store Logo Outro**: Defaults to a transparent `@snazzysboutique` logo overlay with soft drop shadow fading in over the last 2.0 seconds of the Reel (replaceable with a custom PNG, adjustable 1–4s duration, or a pre-made outro video clip `.mp4`/`.mov`).
 - **Export & Share**: Renders 1080×1920 `.mp4` on-device via `AVFoundation`, previews in-app, saves directly to iPhone Photos, and opens the iOS Share Sheet.
 
 ## Tech Stack & Requirements
@@ -39,6 +39,7 @@ reels-creator/
     ├── Services/
     │   ├── AudioBeatDetector.swift
     │   ├── IntroTextOverlayRenderer.swift
+    │   ├── OutroLogoOverlayRenderer.swift
     │   ├── PhotoLibrarySaver.swift
     │   ├── ReelVideoComposer.swift
     │   ├── StillImageVideoGenerator.swift

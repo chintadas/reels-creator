@@ -32,8 +32,14 @@ public enum AudioSelectionMode: Equatable, Sendable {
 }
 
 public enum OutroSelectionMode: Equatable, Sendable {
+    public static let defaultLogoOverlayDurationSeconds: Double = 2.0
+    public static let defaultLogoOverlayFadeInDurationSeconds: Double = 0.3
+
     case none
-    case staticLogo(backgroundColorHex: String, durationSeconds: Double = 2.0)
+    case logoOverlay(
+        durationSeconds: Double = defaultLogoOverlayDurationSeconds,
+        fadeInDurationSeconds: Double = defaultLogoOverlayFadeInDurationSeconds
+    )
     case videoClip(durationSeconds: Double)
 }
 
@@ -44,7 +50,7 @@ public struct ReelPolishSettings: Equatable, Sendable {
     public var beatSyncEnabled: Bool
 
     public init(
-        defaultPhotoDuration: Double = 2.5,
+        defaultPhotoDuration: Double = 1.5,
         crossfadeEnabled: Bool = true,
         crossfadeDuration: Double = 0.4,
         beatSyncEnabled: Bool = false
