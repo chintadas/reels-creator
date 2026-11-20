@@ -28,6 +28,7 @@ reels-creator/
 ├── ReelsCreatorCore/              # Local SwiftPM package (models, beat-snapper, timeline planner & tests)
 │   ├── Package.swift
 │   ├── Sources/ReelsCreatorCore/
+│   │   ├── Audio/                 # BeatOnsetDetector
 │   │   ├── Models/                # MediaClipSpec, AudioSelectionMode, OutroSelectionMode, ReelPolishSettings
 │   │   └── Timeline/              # BeatSnapper, TimelinePlanner
 │   └── Tests/ReelsCreatorCoreTests/
@@ -35,18 +36,34 @@ reels-creator/
     ├── App/
     │   └── ReelsCreatorApp.swift
     ├── Models/
+    │   ├── ReelCreatorState.swift
     │   └── SelectedMediaItem.swift
     ├── Services/
+    │   ├── AVAssetExportSession+Async.swift
     │   ├── AudioBeatDetector.swift
     │   ├── IntroTextOverlayRenderer.swift
+    │   ├── MediaImportService.swift
     │   ├── OutroLogoOverlayRenderer.swift
+    │   ├── OverlayCompositionBuilder.swift
     │   ├── PhotoLibrarySaver.swift
+    │   ├── ReelRenderConfig.swift
     │   ├── ReelVideoComposer.swift
     │   ├── StillImageVideoGenerator.swift
+    │   ├── TemporaryMediaStore.swift
     │   └── VideoAudioExtractor.swift
     ├── ViewModels/
     │   └── ReelCreatorViewModel.swift
     ├── Views/
+    │   ├── Components/
+    │   │   ├── LabeledDurationSlider.swift
+    │   │   └── OverlayPreviewCards.swift
+    │   ├── Sections/
+    │   │   ├── AudioSelectionSection.swift
+    │   │   ├── GenerateSection.swift
+    │   │   ├── IntroTextSection.swift
+    │   │   ├── MediaSelectionSection.swift
+    │   │   ├── OutroSection.swift
+    │   │   └── PolishSection.swift
     │   ├── ExportResultSheet.swift
     │   └── ReelCreatorView.swift
     ├── Resources/

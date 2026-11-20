@@ -1,25 +1,9 @@
-import AVFoundation
 import Foundation
 import Observation
 import PhotosUI
 import ReelsCreatorCore
 import SwiftUI
 import UIKit
-
-enum AudioSourceChoice: String, CaseIterable, Identifiable {
-    case instagramAudio = "No Music (Add in IG)"
-    case customTrack = "Custom Audio Track"
-
-    var id: String { rawValue }
-}
-
-enum OutroTypeChoice: String, CaseIterable, Identifiable {
-    case none = "None"
-    case logoOverlay = "Logo Overlay"
-    case videoClip = "Outro Video"
-
-    var id: String { rawValue }
-}
 
 @MainActor
 @Observable
@@ -31,94 +15,95 @@ final class ReelCreatorViewModel {
         UIImage(named: defaultLogoAssetName)
     }
 
+    private let dependencies: ReelCreatorDependencies
+    private var nextClipSequenceNumber = 1
+
     var selectedItems: [SelectedMediaItem] = []
     var isLoadingMedia = false
 
     var audioChoice: AudioSourceChoice = .instagramAudio
-    var customAudioURL: URL?
-    var customAudioName: String?
-    var customAudioDurationSeconds: Double = 0
-    var customAudioThumbnail: UIImage?
+    var customAudio: CustomAudioTrack?
     var isExtractingAudio = false
 
     var outroType: OutroTypeChoice = .logoOverlay
     var logoImage: UIImage? = ReelCreatorViewModel.loadDefaultLogoImage()
     var isUsingDefaultLogo: Bool = true
     var outroDurationSeconds: Double = ReelCreatorViewModel.defaultOutroDurationSeconds
-    var outroVideoURL: URL?
-    var outroVideoName: String?
-    var outroVideoDurationSeconds: Double = 0
+    var outroVideo: OutroVideoClip?
 
     var polishSettings = ReelPolishSettings()
     var introText: String = ""
 
-    var resolvedIntroOverlaySpec: IntroTextOverlaySpec? {
-        IntroTextOverlaySpec(rawText: introText)
-    }
-
     var isExporting = false
     var exportProgressMessage = ""
-    var exportedVideoURL: URL?
+    var exportResult: ExportResultState?
     var showExportSheet = false
     var errorMessage: String?
 
-    var isSavingToPhotos = false
-    var savedToPhotosSuccess = false
+    init(dependencies: ReelCreatorDependencies = .live) {
+        self.dependencies = dependencies
+    }
+
+    var resolvedIntroOverlaySpec: IntroTextOverlaySpec? {
+        IntroTextOverlaySpec(rawText: introText)
+    }
 
     var isOutroLogoCustomized: Bool {
         !isUsingDefaultLogo || abs(outroDurationSeconds - Self.defaultOutroDurationSeconds) > 0.001
     }
 
     var canGenerateReel: Bool {
-        guard !selectedItems.isEmpty, !isExporting, !isExtractingAudio else { return false }
-        if audioChoice == .customTrack && customAudioURL == nil {
-            return false
-        }
-        switch outroType {
-        case .none:
-            return true
-        case .logoOverlay:
-            return logoImage != nil
-        case .videoClip:
-            return outroVideoURL != nil
-        }
+        validationHint == nil && !isExporting
     }
 
     var validationHint: String? {
         if selectedItems.isEmpty {
             return "Select at least one photo or video to create a Reel."
         }
+        if isLoadingMedia {
+            return "Loading selected media..."
+        }
         if isExtractingAudio {
             return "Extracting audio from selected video..."
         }
-        if audioChoice == .customTrack && customAudioURL == nil {
+        if audioChoice == .customTrack && customAudio == nil {
             return "Extract audio from a video or switch back to No Music (Add in IG)."
         }
         if outroType == .logoOverlay && logoImage == nil {
             return "Pick your store logo image (PNG) or set Outro to None."
         }
-        if outroType == .videoClip && outroVideoURL == nil {
+        if outroType == .videoClip && outroVideo == nil {
             return "Pick a pre-made outro video clip or set Outro to None."
         }
         return nil
     }
 
-    var estimatedDurationSeconds: Double {
+    var plannedTimeline: PlannedTimeline {
         let specs = selectedItems.map { item in
             MediaClipSpec(
                 id: item.id,
                 kind: item.kind,
-                sourceDurationSeconds: item.kind == .photo ? polishSettings.defaultPhotoDuration : item.durationSeconds
+                sourceDurationSeconds: item.kind == .photo ? nil : item.durationSeconds
             )
         }
-        let timeline = TimelinePlanner.plan(
+        return TimelinePlanner.plan(
             clips: specs,
             audio: resolvedAudioMode(),
             outro: resolvedOutroMode(),
             settings: polishSettings,
             introOverlay: resolvedIntroOverlaySpec
         )
-        return timeline.totalDurationSeconds
+    }
+
+    var estimatedDurationSeconds: Double {
+        plannedTimeline.totalDurationSeconds
+    }
+
+    var plannedIntroDurationSeconds: Double {
+        if selectedItems.isEmpty {
+            return IntroTextOverlaySpec.defaultDurationSeconds
+        }
+        return plannedTimeline.introOverlay?.durationSeconds ?? 0.0
     }
 
     func loadSelectedPickerItems(_ pickerItems: [PhotosPickerItem]) async {
@@ -128,39 +113,14 @@ final class ReelCreatorViewModel {
 
         for pickerItem in pickerItems {
             do {
-                let isMovie = pickerItem.supportedContentTypes.contains { $0.conforms(to: .movie) }
-
-                if isMovie, let movie = try await pickerItem.loadTransferable(type: MovieFileTransferable.self) {
-                    let asset = AVURLAsset(url: movie.url)
-                    let duration = try await asset.load(.duration)
-                    let durationSeconds = max(0.2, CMTimeGetSeconds(duration))
-                    let thumbnail = await SelectedMediaItem.generateVideoThumbnail(url: movie.url)
-                        ?? UIImage(systemName: "video.fill")
-                        ?? UIImage()
-
-                    selectedItems.append(
-                        SelectedMediaItem(
-                            kind: .video,
-                            thumbnail: thumbnail,
-                            videoURL: movie.url,
-                            durationSeconds: durationSeconds,
-                            displayTitle: "Video \(selectedItems.count + 1)"
-                        )
-                    )
-                } else if let data = try await pickerItem.loadTransferable(type: Data.self),
-                          let image = UIImage(data: data) {
-                    // TODO: Move full-res photo decoding and thumbnail downscaling off @MainActor
-                    // (e.g., via CGImageSourceCreateThumbnailAtIndex in a background task) to avoid main-thread I/O hangs.
-                    let thumbnail = downscaledThumbnail(from: image)
-                    selectedItems.append(
-                        SelectedMediaItem(
-                            kind: .photo,
-                            thumbnail: thumbnail,
-                            photoImage: image,
-                            durationSeconds: polishSettings.defaultPhotoDuration,
-                            displayTitle: "Photo \(selectedItems.count + 1)"
-                        )
-                    )
+                let sequence = nextClipSequenceNumber
+                if let item = try await dependencies.loadMediaItem(
+                    pickerItem,
+                    polishSettings.defaultPhotoDuration,
+                    sequence
+                ) {
+                    selectedItems.append(item)
+                    nextClipSequenceNumber += 1
                 }
             } catch {
                 errorMessage = "Could not load one of the selected items: \(error.localizedDescription)"
@@ -180,10 +140,16 @@ final class ReelCreatorViewModel {
     }
 
     func removeItem(id: UUID) {
+        for item in selectedItems where item.id == id {
+            dependencies.removeTemporaryFile(item.mediaURL)
+        }
         selectedItems.removeAll { $0.id == id }
     }
 
     func clearAllItems() {
+        for item in selectedItems {
+            dependencies.removeTemporaryFile(item.mediaURL)
+        }
         selectedItems.removeAll()
     }
 
@@ -197,33 +163,21 @@ final class ReelCreatorViewModel {
         defer { isExtractingAudio = false }
 
         do {
-            guard let movie = try await item.loadTransferable(type: MovieFileTransferable.self) else {
-                errorMessage = "Could not load the selected video from Photos."
-                return
-            }
-            defer { removeTemporaryFileIfPresent(at: movie.url) }
-
-            let extracted = try await VideoAudioExtractor.extractAudio(from: movie.url)
-            let thumbnail = await SelectedMediaItem.generateVideoThumbnail(url: movie.url)
-
-            let previousAudioURL = customAudioURL
-            customAudioURL = extracted.audioURL
-            customAudioName = "Audio from Video"
-            customAudioDurationSeconds = extracted.durationSeconds
-            customAudioThumbnail = thumbnail
+            let track = try await dependencies.extractCustomAudio(item)
+            let previousAudioURL = customAudio?.url
+            customAudio = track
             audioChoice = .customTrack
-            removeTemporaryFileIfPresent(at: previousAudioURL)
+            if previousAudioURL != track.url {
+                dependencies.removeTemporaryFile(previousAudioURL)
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
     func clearCustomAudio() {
-        removeTemporaryFileIfPresent(at: customAudioURL)
-        customAudioURL = nil
-        customAudioName = nil
-        customAudioDurationSeconds = 0
-        customAudioThumbnail = nil
+        dependencies.removeTemporaryFile(customAudio?.url)
+        customAudio = nil
         audioChoice = .instagramAudio
         polishSettings.beatSyncEnabled = false
     }
@@ -231,8 +185,7 @@ final class ReelCreatorViewModel {
     func loadLogoItem(_ item: PhotosPickerItem?) async {
         guard let item else { return }
         do {
-            if let data = try await item.loadTransferable(type: Data.self),
-               let image = UIImage(data: data) {
+            if let image = try await dependencies.loadLogoImage(item) {
                 logoImage = image
                 isUsingDefaultLogo = false
                 outroType = .logoOverlay
@@ -242,18 +195,12 @@ final class ReelCreatorViewModel {
         }
     }
 
-    func importLogoFile(url: URL) {
+    func importLogoFile(url: URL) async {
         do {
-            let localURL = try copySecurityScopedFileToTemp(url: url, prefix: "logo")
-            defer { removeTemporaryFileIfPresent(at: localURL) }
-            let data = try Data(contentsOf: localURL)
-            if let image = UIImage(data: data) {
-                logoImage = image
-                isUsingDefaultLogo = false
-                outroType = .logoOverlay
-            } else {
-                errorMessage = "The selected file is not a supported image."
-            }
+            let image = try await dependencies.importLogoImage(url)
+            logoImage = image
+            isUsingDefaultLogo = false
+            outroType = .logoOverlay
         } catch {
             errorMessage = "Could not import logo file: \(error.localizedDescription)"
         }
@@ -268,15 +215,13 @@ final class ReelCreatorViewModel {
 
     func importOutroVideo(url: URL) async {
         do {
-            let localURL = try copySecurityScopedFileToTemp(url: url, prefix: "outro")
-            let asset = AVURLAsset(url: localURL)
-            let duration = try await asset.load(.duration)
-            let seconds = max(0.2, CMTimeGetSeconds(duration))
-
-            outroVideoURL = localURL
-            outroVideoName = url.lastPathComponent
-            outroVideoDurationSeconds = seconds
+            let clip = try await dependencies.importOutroVideo(url)
+            let previousURL = outroVideo?.url
+            outroVideo = clip
             outroType = .videoClip
+            if previousURL != clip.url {
+                dependencies.removeTemporaryFile(previousURL)
+            }
         } catch {
             errorMessage = "Could not import outro video: \(error.localizedDescription)"
         }
@@ -285,13 +230,13 @@ final class ReelCreatorViewModel {
     func loadOutroVideoItem(_ item: PhotosPickerItem?) async {
         guard let item else { return }
         do {
-            if let movie = try await item.loadTransferable(type: MovieFileTransferable.self) {
-                let asset = AVURLAsset(url: movie.url)
-                let duration = try await asset.load(.duration)
-                outroVideoURL = movie.url
-                outroVideoName = "Selected Outro Video"
-                outroVideoDurationSeconds = max(0.2, CMTimeGetSeconds(duration))
+            if let clip = try await dependencies.loadOutroVideo(item) {
+                let previousURL = outroVideo?.url
+                outroVideo = clip
                 outroType = .videoClip
+                if previousURL != clip.url {
+                    dependencies.removeTemporaryFile(previousURL)
+                }
             }
         } catch {
             errorMessage = "Could not load outro video from Photos: \(error.localizedDescription)"
@@ -303,7 +248,6 @@ final class ReelCreatorViewModel {
         isExporting = true
         exportProgressMessage = "Preparing composition..."
         errorMessage = nil
-        savedToPhotosSuccess = false
 
         defer {
             isExporting = false
@@ -315,31 +259,35 @@ final class ReelCreatorViewModel {
             audioMode: resolvedAudioMode(),
             outroMode: resolvedOutroMode(),
             outroLogoImage: logoImage,
-            outroVideoURL: outroVideoURL,
+            outroVideoURL: outroVideo?.url,
             polishSettings: polishSettings,
             introOverlay: resolvedIntroOverlaySpec
         )
 
         do {
-            let outputURL = try await ReelVideoComposer.compose(request: request) { [weak self] status in
+            let outputURL = try await dependencies.composeReel(request) { [weak self] status in
                 self?.exportProgressMessage = status
             }
-            exportedVideoURL = outputURL
+            let previousExportURL = exportResult?.videoURL
+            exportResult = ExportResultState(videoURL: outputURL)
             showExportSheet = true
+            if previousExportURL != outputURL {
+                dependencies.removeTemporaryFile(previousExportURL)
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
     func saveExportedReelToPhotos() async {
-        guard let url = exportedVideoURL, !isSavingToPhotos else { return }
-        isSavingToPhotos = true
-        defer { isSavingToPhotos = false }
+        guard let currentResult = exportResult, currentResult.saveState == .idle else { return }
+        exportResult?.saveState = .saving
 
         do {
-            try await PhotoLibrarySaver.saveVideo(at: url)
-            savedToPhotosSuccess = true
+            try await dependencies.saveVideoToPhotos(currentResult.videoURL)
+            exportResult?.saveState = .saved
         } catch {
+            exportResult?.saveState = .idle
             errorMessage = error.localizedDescription
         }
     }
@@ -349,8 +297,8 @@ final class ReelCreatorViewModel {
         case .instagramAudio:
             return .none
         case .customTrack:
-            if let customAudioURL {
-                return .customTrack(url: customAudioURL, durationSeconds: customAudioDurationSeconds)
+            if let customAudio {
+                return .customTrack(url: customAudio.url, durationSeconds: customAudio.durationSeconds)
             }
             return .none
         }
@@ -363,51 +311,7 @@ final class ReelCreatorViewModel {
         case .logoOverlay:
             return .logoOverlay(durationSeconds: outroDurationSeconds)
         case .videoClip:
-            return .videoClip(durationSeconds: max(0.2, outroVideoDurationSeconds))
-        }
-    }
-
-    private func copySecurityScopedFileToTemp(url: URL, prefix: String) throws -> URL {
-        let didStartAccessing = url.startAccessingSecurityScopedResource()
-        defer {
-            if didStartAccessing {
-                url.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        let ext = url.pathExtension
-        var destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(prefix)-\(UUID().uuidString)")
-        if !ext.isEmpty {
-            destination = destination.appendingPathExtension(ext)
-        }
-
-        if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
-        }
-        try FileManager.default.copyItem(at: url, to: destination)
-        return destination
-    }
-
-    private func removeTemporaryFileIfPresent(at url: URL?) {
-        guard let url else { return }
-        let tempPath = FileManager.default.temporaryDirectory.standardizedFileURL.path
-        let filePath = url.standardizedFileURL.path
-        if filePath.hasPrefix(tempPath) {
-            try? FileManager.default.removeItem(at: url)
-        }
-    }
-
-    private func downscaledThumbnail(from image: UIImage) -> UIImage {
-        let targetSize = CGSize(width: 240, height: 426)
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1.0
-        let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
-        return renderer.image { _ in
-            let scale = max(targetSize.width / image.size.width, targetSize.height / image.size.height)
-            let w = image.size.width * scale
-            let h = image.size.height * scale
-            image.draw(in: CGRect(x: (targetSize.width - w) / 2, y: (targetSize.height - h) / 2, width: w, height: h))
+            return .videoClip(durationSeconds: max(0.2, outroVideo?.durationSeconds ?? 0.2))
         }
     }
 }

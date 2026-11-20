@@ -36,6 +36,20 @@ public struct PlannedSegment: Identifiable, Equatable, Sendable {
     public var endTimeSeconds: Double {
         startTimeSeconds + durationSeconds
     }
+
+    internal func withFadeOut(_ fadeOutDurationSeconds: Double) -> PlannedSegment {
+        PlannedSegment(
+            id: id,
+            index: index,
+            trackIndex: trackIndex,
+            startTimeSeconds: startTimeSeconds,
+            durationSeconds: durationSeconds,
+            fadeInDurationSeconds: fadeInDurationSeconds,
+            fadeOutDurationSeconds: fadeOutDurationSeconds,
+            isOutro: isOutro,
+            keepOriginalAudio: keepOriginalAudio
+        )
+    }
 }
 
 public struct PlannedIntroOverlay: Equatable, Sendable {
@@ -84,6 +98,19 @@ public struct PlannedOutroLogoOverlay: Equatable, Sendable {
     }
 }
 
+public struct PlannedOverlays: Equatable, Sendable {
+    public let introOverlay: PlannedIntroOverlay?
+    public let outroLogoOverlay: PlannedOutroLogoOverlay?
+
+    public init(
+        introOverlay: PlannedIntroOverlay?,
+        outroLogoOverlay: PlannedOutroLogoOverlay?
+    ) {
+        self.introOverlay = introOverlay
+        self.outroLogoOverlay = outroLogoOverlay
+    }
+}
+
 public struct PlannedTimeline: Equatable, Sendable {
     public let segments: [PlannedSegment]
     public let totalDurationSeconds: Double
@@ -115,6 +142,16 @@ public enum TimelinePlanner {
         let durationSeconds: Double
         let isOutro: Bool
         let keepOriginalAudio: Bool
+    }
+
+    internal static func effectiveCrossfade(
+        requested: Double,
+        previousDuration: Double,
+        nextDuration: Double
+    ) -> Double {
+        guard requested > 0 else { return 0.0 }
+        let value = min(requested, previousDuration / 3.0, nextDuration / 3.0)
+        return value > 0.01 ? value : 0.0
     }
 
     public static func resolveIntroOverlay(
@@ -167,6 +204,34 @@ public enum TimelinePlanner {
         )
     }
 
+    public static func resolveOverlays(
+        intro: IntroTextOverlaySpec?,
+        outro: OutroSelectionMode,
+        outroVideoStartTimeSeconds: Double? = nil,
+        totalDurationSeconds: Double
+    ) -> PlannedOverlays {
+        let outroLogoOverlay: PlannedOutroLogoOverlay?
+        if case .logoOverlay(let durationSeconds, let fadeInDurationSeconds) = outro {
+            outroLogoOverlay = resolveOutroLogoOverlay(
+                durationSeconds: durationSeconds,
+                fadeInDurationSeconds: fadeInDurationSeconds,
+                totalDurationSeconds: totalDurationSeconds
+            )
+        } else {
+            outroLogoOverlay = nil
+        }
+
+        let maxIntroEnd = outroVideoStartTimeSeconds
+            ?? outroLogoOverlay?.startTimeSeconds
+            ?? totalDurationSeconds
+        let introOverlay = resolveIntroOverlay(intro, maxEndTimeSeconds: maxIntroEnd)
+
+        return PlannedOverlays(
+            introOverlay: introOverlay,
+            outroLogoOverlay: outroLogoOverlay
+        )
+    }
+
     public static func plan(
         clips: [MediaClipSpec],
         audio: AudioSelectionMode,
@@ -187,11 +252,18 @@ public enum TimelinePlanner {
             backgroundAudioDurationSeconds = max(0, durationSeconds)
         }
 
+        let requestedCrossfade = settings.crossfadeEnabled ? max(0, settings.crossfadeDuration) : 0.0
+
         let clipDurations: [Double]
         if settings.beatSyncEnabled && muteOriginalVideoClips && !beatTimestamps.isEmpty {
-            clipDurations = BeatSnapper.snapDurations(clips: clips, beatTimestamps: beatTimestamps)
+            clipDurations = BeatSnapper.snapDurations(
+                clips: clips,
+                beatTimestamps: beatTimestamps,
+                crossfadeDuration: requestedCrossfade,
+                defaultPhotoDuration: settings.defaultPhotoDuration
+            )
         } else {
-            clipDurations = clips.map { max(0.1, $0.sourceDurationSeconds) }
+            clipDurations = clips.map { $0.resolvedSourceDuration(defaultPhotoDuration: settings.defaultPhotoDuration) }
         }
 
         var rawSpecs: [RawSegmentSpec] = zip(clips, clipDurations).map { clip, duration in
@@ -226,28 +298,18 @@ public enum TimelinePlanner {
             var startTime = currentEndTime
             var fadeIn = 0.0
 
-            if settings.crossfadeEnabled && settings.crossfadeDuration > 0 && index > 0 {
+            if settings.crossfadeEnabled && requestedCrossfade > 0 && index > 0 {
                 let prev = plannedSegments[index - 1]
-                let effectiveCrossfade = min(
-                    settings.crossfadeDuration,
-                    prev.durationSeconds / 3.0,
-                    spec.durationSeconds / 3.0
+                let overlap = effectiveCrossfade(
+                    requested: requestedCrossfade,
+                    previousDuration: prev.durationSeconds,
+                    nextDuration: spec.durationSeconds
                 )
 
-                if effectiveCrossfade > 0.01 {
-                    plannedSegments[index - 1] = PlannedSegment(
-                        id: prev.id,
-                        index: prev.index,
-                        trackIndex: prev.trackIndex,
-                        startTimeSeconds: prev.startTimeSeconds,
-                        durationSeconds: prev.durationSeconds,
-                        fadeInDurationSeconds: prev.fadeInDurationSeconds,
-                        fadeOutDurationSeconds: effectiveCrossfade,
-                        isOutro: prev.isOutro,
-                        keepOriginalAudio: prev.keepOriginalAudio
-                    )
-                    startTime = currentEndTime - effectiveCrossfade
-                    fadeIn = effectiveCrossfade
+                if overlap > 0 {
+                    plannedSegments[index - 1] = prev.withFadeOut(overlap)
+                    startTime = currentEndTime - overlap
+                    fadeIn = overlap
                 }
             }
 
@@ -266,34 +328,20 @@ public enum TimelinePlanner {
             currentEndTime = segment.endTimeSeconds
         }
 
-        let plannedOutroLogoOverlay: PlannedOutroLogoOverlay?
-        if case .logoOverlay(let durationSeconds, let fadeInDurationSeconds) = outro {
-            plannedOutroLogoOverlay = resolveOutroLogoOverlay(
-                durationSeconds: durationSeconds,
-                fadeInDurationSeconds: fadeInDurationSeconds,
-                totalDurationSeconds: currentEndTime
-            )
-        } else {
-            plannedOutroLogoOverlay = nil
-        }
-
-        let maxIntroEnd: Double
-        if let outroSegment = plannedSegments.first(where: { $0.isOutro }) {
-            maxIntroEnd = outroSegment.startTimeSeconds
-        } else if let plannedOutroLogoOverlay {
-            maxIntroEnd = plannedOutroLogoOverlay.startTimeSeconds
-        } else {
-            maxIntroEnd = currentEndTime
-        }
-        let plannedIntroOverlay = resolveIntroOverlay(introOverlay, maxEndTimeSeconds: maxIntroEnd)
+        let overlays = resolveOverlays(
+            intro: introOverlay,
+            outro: outro,
+            outroVideoStartTimeSeconds: plannedSegments.first(where: { $0.isOutro })?.startTimeSeconds,
+            totalDurationSeconds: currentEndTime
+        )
 
         return PlannedTimeline(
             segments: plannedSegments,
             totalDurationSeconds: currentEndTime,
             muteOriginalVideoClips: muteOriginalVideoClips,
             backgroundAudioDurationSeconds: backgroundAudioDurationSeconds,
-            introOverlay: plannedIntroOverlay,
-            outroLogoOverlay: plannedOutroLogoOverlay
+            introOverlay: overlays.introOverlay,
+            outroLogoOverlay: overlays.outroLogoOverlay
         )
     }
 }

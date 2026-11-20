@@ -447,4 +447,114 @@ final class TimelinePlannerTests: XCTestCase {
         let settings = ReelPolishSettings()
         XCTAssertEqual(settings.defaultPhotoDuration, 1.5, accuracy: 0.0001)
     }
+
+    func testPhotoSpecUsesDefaultPhotoDurationFromSettings() {
+        let clips = [
+            MediaClipSpec(kind: .photo),
+            MediaClipSpec(kind: .video, sourceDurationSeconds: 2.5),
+            MediaClipSpec(kind: .photo)
+        ]
+        let settings = ReelPolishSettings(
+            defaultPhotoDuration: 2.25,
+            crossfadeEnabled: false,
+            beatSyncEnabled: false
+        )
+
+        let timeline = TimelinePlanner.plan(
+            clips: clips,
+            audio: .none,
+            outro: .none,
+            settings: settings
+        )
+
+        XCTAssertEqual(timeline.segments.count, 3)
+        XCTAssertEqual(timeline.segments[0].durationSeconds, 2.25, accuracy: 0.0001)
+        XCTAssertEqual(timeline.segments[1].durationSeconds, 2.5, accuracy: 0.0001)
+        XCTAssertEqual(timeline.segments[2].durationSeconds, 2.25, accuracy: 0.0001)
+        XCTAssertEqual(timeline.totalDurationSeconds, 7.0, accuracy: 0.0001)
+    }
+
+    func testResolveOverlaysPrecedence() throws {
+        let introSpec = try XCTUnwrap(IntroTextOverlaySpec(rawText: "Summer Edit"))
+
+        // Video outro start clamps intro end and produces no logo overlay.
+        let videoOutroOverlays = TimelinePlanner.resolveOverlays(
+            intro: introSpec,
+            outro: .videoClip(durationSeconds: 3.0),
+            outroVideoStartTimeSeconds: 2.1,
+            totalDurationSeconds: 5.1
+        )
+        XCTAssertNil(videoOutroOverlays.outroLogoOverlay)
+        let videoIntro = try XCTUnwrap(videoOutroOverlays.introOverlay)
+        XCTAssertEqual(videoIntro.endTimeSeconds, 2.1, accuracy: 0.0001)
+
+        // Logo overlay clamps intro end to logo start.
+        let logoOutroOverlays = TimelinePlanner.resolveOverlays(
+            intro: introSpec,
+            outro: .logoOverlay(durationSeconds: 2.0, fadeInDurationSeconds: 0.3),
+            totalDurationSeconds: 4.5
+        )
+        let logoOverlay = try XCTUnwrap(logoOutroOverlays.outroLogoOverlay)
+        let logoIntro = try XCTUnwrap(logoOutroOverlays.introOverlay)
+        XCTAssertEqual(logoOverlay.startTimeSeconds, 2.5, accuracy: 0.0001)
+        XCTAssertEqual(logoIntro.endTimeSeconds, 2.5, accuracy: 0.0001)
+
+        // No outro allows full intro duration when total duration permits.
+        let noOutroOverlays = TimelinePlanner.resolveOverlays(
+            intro: introSpec,
+            outro: .none,
+            totalDurationSeconds: 5.0
+        )
+        XCTAssertNil(noOutroOverlays.outroLogoOverlay)
+        XCTAssertEqual(noOutroOverlays.introOverlay?.endTimeSeconds ?? 0, 3.0, accuracy: 0.0001)
+
+        // Very short reel leaves no room before logo overlay, omitting intro.
+        let clampedOverlays = TimelinePlanner.resolveOverlays(
+            intro: introSpec,
+            outro: .logoOverlay(durationSeconds: 2.0, fadeInDurationSeconds: 0.3),
+            totalDurationSeconds: 1.5
+        )
+        XCTAssertNil(clampedOverlays.introOverlay)
+        XCTAssertEqual(clampedOverlays.outroLogoOverlay?.durationSeconds ?? 0, 1.5, accuracy: 0.0001)
+    }
+
+    func testBeatSyncWithCrossfadesAlignsCutBoundariesToBeats() {
+        let clips = [
+            MediaClipSpec(kind: .photo),
+            MediaClipSpec(kind: .video, sourceDurationSeconds: 3.0),
+            MediaClipSpec(kind: .photo)
+        ]
+        let beats = [0.5, 2.2, 4.9, 6.7, 8.0]
+        let audioURL = URL(fileURLWithPath: "/tmp/track.m4a")
+        let settings = ReelPolishSettings(
+            defaultPhotoDuration: 2.0,
+            crossfadeEnabled: true,
+            crossfadeDuration: 0.4,
+            beatSyncEnabled: true
+        )
+
+        let timeline = TimelinePlanner.plan(
+            clips: clips,
+            audio: .customTrack(url: audioURL, durationSeconds: 20.0),
+            outro: .none,
+            settings: settings,
+            beatTimestamps: beats
+        )
+
+        XCTAssertEqual(timeline.segments.count, 3)
+        // Photo 1: snaps to beat 2.2
+        XCTAssertEqual(timeline.segments[0].startTimeSeconds, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(timeline.segments[0].durationSeconds, 2.2, accuracy: 0.0001)
+        XCTAssertEqual(timeline.segments[0].endTimeSeconds, 2.2, accuracy: 0.0001)
+
+        // Video 2: starts at 2.2 - 0.4 = 1.8, ends at 4.8
+        XCTAssertEqual(timeline.segments[1].startTimeSeconds, 1.8, accuracy: 0.0001)
+        XCTAssertEqual(timeline.segments[1].durationSeconds, 3.0, accuracy: 0.0001)
+        XCTAssertEqual(timeline.segments[1].endTimeSeconds, 4.8, accuracy: 0.0001)
+
+        // Photo 3: starts at 4.8 - 0.4 = 4.4, snaps duration to 2.3 so end lands exactly on beat 6.7
+        XCTAssertEqual(timeline.segments[2].startTimeSeconds, 4.4, accuracy: 0.0001)
+        XCTAssertEqual(timeline.segments[2].durationSeconds, 2.3, accuracy: 0.0001)
+        XCTAssertEqual(timeline.segments[2].endTimeSeconds, 6.7, accuracy: 0.0001)
+    }
 }

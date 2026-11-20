@@ -1,12 +1,8 @@
-import AVFoundation
 import QuartzCore
 import ReelsCreatorCore
 import UIKit
 
 enum IntroTextOverlayRenderer {
-    static let reelRenderSize = CGSize(width: 1080, height: 1920)
-    static let previewCanvasSize = CGSize(width: 360, height: 640)
-
     private struct TextLayoutSpec {
         let attributes: [NSAttributedString.Key: Any]
         let boundingHeight: CGFloat
@@ -14,14 +10,14 @@ enum IntroTextOverlayRenderer {
 
     static func renderOverlayImage(
         text: String,
-        canvasSize: CGSize = reelRenderSize
+        canvasSize: CGSize = ReelRenderConfig.renderSize
     ) -> UIImage? {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty, canvasSize.width > 0, canvasSize.height > 0 else {
             return nil
         }
 
-        let scale = canvasSize.width / reelRenderSize.width
+        let scale = canvasSize.width / ReelRenderConfig.renderSize.width
         let maxTextWidth = canvasSize.width - (240.0 * scale)
         let maxTextHeight = 960.0 * scale
         guard maxTextWidth > 0, maxTextHeight > 0 else {
@@ -59,7 +55,7 @@ enum IntroTextOverlayRenderer {
 
     static func makeOverlayLayer(
         for overlay: PlannedIntroOverlay,
-        renderSize: CGSize = reelRenderSize
+        renderSize: CGSize = ReelRenderConfig.renderSize
     ) -> CALayer? {
         guard overlay.durationSeconds > 0,
               let overlayImage = renderOverlayImage(text: overlay.text, canvasSize: renderSize),
@@ -67,60 +63,14 @@ enum IntroTextOverlayRenderer {
             return nil
         }
 
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        defer { CATransaction.commit() }
-
-        let overlayLayer = CALayer()
-        overlayLayer.frame = CGRect(origin: .zero, size: renderSize)
-        overlayLayer.contents = cgImage
-        overlayLayer.contentsScale = 1.0
-        overlayLayer.contentsGravity = .resize
-        overlayLayer.opacity = 0.0
-
-        let animation = makeOpacityAnimation(for: overlay)
-        overlayLayer.add(animation, forKey: "introTextOpacity")
-        return overlayLayer
-    }
-
-    static func makeAnimationTool(
-        for overlay: PlannedIntroOverlay,
-        renderSize: CGSize = reelRenderSize
-    ) -> AVVideoCompositionCoreAnimationTool? {
-        guard let overlayLayer = makeOverlayLayer(for: overlay, renderSize: renderSize) else {
-            return nil
-        }
-        return makeAnimationTool(overlayLayers: [overlayLayer], renderSize: renderSize)
-    }
-
-    static func makeAnimationTool(
-        overlayLayers: [CALayer],
-        renderSize: CGSize = reelRenderSize
-    ) -> AVVideoCompositionCoreAnimationTool? {
-        guard !overlayLayers.isEmpty else {
-            return nil
-        }
-
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        defer { CATransaction.commit() }
-
-        let bounds = CGRect(origin: .zero, size: renderSize)
-
-        let parentLayer = CALayer()
-        parentLayer.frame = bounds
-
-        let videoLayer = CALayer()
-        videoLayer.frame = bounds
-
-        parentLayer.addSublayer(videoLayer)
-        for overlayLayer in overlayLayers {
-            parentLayer.addSublayer(overlayLayer)
-        }
-
-        return AVVideoCompositionCoreAnimationTool(
-            postProcessingAsVideoLayer: videoLayer,
-            in: parentLayer
+        return OverlayCompositionBuilder.makeImageOverlayLayer(
+            image: cgImage,
+            renderSize: renderSize,
+            startTimeSeconds: overlay.startTimeSeconds,
+            durationSeconds: overlay.durationSeconds,
+            fadeInDurationSeconds: overlay.fadeInDurationSeconds,
+            fadeOutDurationSeconds: overlay.fadeOutDurationSeconds,
+            animationKey: "introTextOpacity"
         )
     }
 
@@ -203,9 +153,9 @@ enum IntroTextOverlayRenderer {
         paragraphStyle.lineSpacing = refSize * 0.14 * scale
 
         let shadow = NSShadow()
-        shadow.shadowColor = UIColor.black.withAlphaComponent(0.72)
-        shadow.shadowOffset = CGSize(width: 0, height: 4.0 * scale)
-        shadow.shadowBlurRadius = 18.0 * scale
+        shadow.shadowColor = UIColor.black.withAlphaComponent(ReelRenderConfig.OverlayShadow.colorAlpha)
+        shadow.shadowOffset = CGSize(width: 0, height: ReelRenderConfig.OverlayShadow.referenceOffsetY * scale)
+        shadow.shadowBlurRadius = ReelRenderConfig.OverlayShadow.referenceBlurRadius * scale
 
         return [
             .font: font,
@@ -213,62 +163,5 @@ enum IntroTextOverlayRenderer {
             .paragraphStyle: paragraphStyle,
             .shadow: shadow
         ]
-    }
-
-    private static func makeOpacityAnimation(for overlay: PlannedIntroOverlay) -> CAKeyframeAnimation {
-        let animation = CAKeyframeAnimation(keyPath: "opacity")
-        animation.beginTime = AVCoreAnimationBeginTimeAtZero + overlay.startTimeSeconds
-        animation.duration = overlay.durationSeconds
-        animation.isRemovedOnCompletion = false
-        animation.fillMode = .both
-
-        let duration = overlay.durationSeconds
-        let fadeIn = max(0, min(overlay.fadeInDurationSeconds, duration))
-        let fadeOut = max(0, min(overlay.fadeOutDurationSeconds, duration))
-        let fadeInEnd = fadeIn / duration
-        let fadeOutStart = (duration - fadeOut) / duration
-
-        let easeOut = CAMediaTimingFunction(name: .easeOut)
-        let linear = CAMediaTimingFunction(name: .linear)
-        let easeIn = CAMediaTimingFunction(name: .easeIn)
-
-        if fadeIn > 0 && fadeOut > 0 {
-            if fadeOutStart > fadeInEnd + 0.0001 {
-                animation.values = [0.0, 1.0, 1.0, 0.0]
-                animation.keyTimes = [0.0, NSNumber(value: fadeInEnd), NSNumber(value: fadeOutStart), 1.0]
-                animation.timingFunctions = [easeOut, linear, easeIn]
-            } else {
-                let peakTime = min(1.0, max(0.0, fadeInEnd))
-                animation.values = [0.0, 1.0, 0.0]
-                animation.keyTimes = [0.0, NSNumber(value: peakTime), 1.0]
-                animation.timingFunctions = [easeOut, easeIn]
-            }
-        } else if fadeIn > 0 {
-            if fadeInEnd < 0.9999 {
-                animation.values = [0.0, 1.0, 1.0]
-                animation.keyTimes = [0.0, NSNumber(value: fadeInEnd), 1.0]
-                animation.timingFunctions = [easeOut, linear]
-            } else {
-                animation.values = [0.0, 1.0]
-                animation.keyTimes = [0.0, 1.0]
-                animation.timingFunctions = [easeOut]
-            }
-        } else if fadeOut > 0 {
-            if fadeOutStart > 0.0001 {
-                animation.values = [1.0, 1.0, 0.0]
-                animation.keyTimes = [0.0, NSNumber(value: fadeOutStart), 1.0]
-                animation.timingFunctions = [linear, easeIn]
-            } else {
-                animation.values = [1.0, 0.0]
-                animation.keyTimes = [0.0, 1.0]
-                animation.timingFunctions = [easeIn]
-            }
-        } else {
-            animation.values = [1.0, 1.0]
-            animation.keyTimes = [0.0, 1.0]
-            animation.timingFunctions = [linear]
-        }
-
-        return animation
     }
 }

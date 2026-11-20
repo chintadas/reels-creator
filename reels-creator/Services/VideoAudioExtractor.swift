@@ -71,11 +71,8 @@ enum VideoAudioExtractor {
         }
         try compAudioTrack.insertTimeRange(sourceRange, of: sourceAudioTrack, at: .zero)
 
-        let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("extracted-audio-\(UUID().uuidString).m4a")
-        if FileManager.default.fileExists(atPath: outputURL.path) {
-            try FileManager.default.removeItem(at: outputURL)
-        }
+        let outputURL = TemporaryMediaStore.makeTemporaryURL(prefix: "extracted-audio", fileExtension: "m4a")
+        TemporaryMediaStore.removeItemIfPresent(outputURL)
 
         guard let exportSession = AVAssetExportSession(
             asset: composition,
@@ -84,27 +81,17 @@ enum VideoAudioExtractor {
             throw ExtractionError.exportSessionCreationFailed
         }
 
-        if #available(iOS 18.0, *) {
-            do {
-                try await exportSession.export(to: outputURL, as: .m4a)
-            } catch {
-                try? FileManager.default.removeItem(at: outputURL)
-                throw ExtractionError.exportFailed(error)
-            }
-        } else {
-            exportSession.outputURL = outputURL
-            exportSession.outputFileType = .m4a
-            await exportSession.export()
-            if exportSession.status != .completed {
-                try? FileManager.default.removeItem(at: outputURL)
-                throw ExtractionError.exportFailed(exportSession.error)
-            }
+        do {
+            try await exportSession.exportCompat(to: outputURL, as: .m4a)
+        } catch {
+            TemporaryMediaStore.removeItemIfPresent(outputURL)
+            throw ExtractionError.exportFailed(error)
         }
 
         let exportedDuration = try await AVURLAsset(url: outputURL).load(.duration)
         let seconds = CMTimeGetSeconds(exportedDuration)
         guard seconds.isFinite && seconds > 0.05 else {
-            try? FileManager.default.removeItem(at: outputURL)
+            TemporaryMediaStore.removeItemIfPresent(outputURL)
             throw ExtractionError.emptyAudioTrack
         }
 

@@ -24,6 +24,20 @@
 		1100000F /* VideoAudioExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1200000F /* VideoAudioExtractor.swift */; };
 		11000010 /* IntroTextOverlayRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12000010 /* IntroTextOverlayRenderer.swift */; };
 		11000011 /* OutroLogoOverlayRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12000011 /* OutroLogoOverlayRenderer.swift */; };
+		11000012 /* ReelCreatorState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12000012 /* ReelCreatorState.swift */; };
+		11000013 /* TemporaryMediaStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12000013 /* TemporaryMediaStore.swift */; };
+		11000014 /* ReelRenderConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12000014 /* ReelRenderConfig.swift */; };
+		11000015 /* AVAssetExportSession+Async.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12000015 /* AVAssetExportSession+Async.swift */; };
+		11000016 /* OverlayCompositionBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12000016 /* OverlayCompositionBuilder.swift */; };
+		11000017 /* MediaImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12000017 /* MediaImportService.swift */; };
+		11000018 /* LabeledDurationSlider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12000018 /* LabeledDurationSlider.swift */; };
+		11000019 /* OverlayPreviewCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12000019 /* OverlayPreviewCards.swift */; };
+		1100001A /* MediaSelectionSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1200001A /* MediaSelectionSection.swift */; };
+		1100001B /* AudioSelectionSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1200001B /* AudioSelectionSection.swift */; };
+		1100001C /* PolishSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1200001C /* PolishSection.swift */; };
+		1100001D /* IntroTextSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1200001D /* IntroTextSection.swift */; };
+		1100001E /* OutroSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1200001E /* OutroSection.swift */; };
+		1100001F /* GenerateSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1200001F /* GenerateSection.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -45,6 +59,20 @@
 		1200000F /* VideoAudioExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoAudioExtractor.swift; sourceTree = "<group>"; };
 		12000010 /* IntroTextOverlayRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntroTextOverlayRenderer.swift; sourceTree = "<group>"; };
 		12000011 /* OutroLogoOverlayRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutroLogoOverlayRenderer.swift; sourceTree = "<group>"; };
+		12000012 /* ReelCreatorState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReelCreatorState.swift; sourceTree = "<group>"; };
+		12000013 /* TemporaryMediaStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemporaryMediaStore.swift; sourceTree = "<group>"; };
+		12000014 /* ReelRenderConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReelRenderConfig.swift; sourceTree = "<group>"; };
+		12000015 /* AVAssetExportSession+Async.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AVAssetExportSession+Async.swift"; sourceTree = "<group>"; };
+		12000016 /* OverlayCompositionBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayCompositionBuilder.swift; sourceTree = "<group>"; };
+		12000017 /* MediaImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaImportService.swift; sourceTree = "<group>"; };
+		12000018 /* LabeledDurationSlider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LabeledDurationSlider.swift; sourceTree = "<group>"; };
+		12000019 /* OverlayPreviewCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayPreviewCards.swift; sourceTree = "<group>"; };
+		1200001A /* MediaSelectionSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaSelectionSection.swift; sourceTree = "<group>"; };
+		1200001B /* AudioSelectionSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioSelectionSection.swift; sourceTree = "<group>"; };
+		1200001C /* PolishSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PolishSection.swift; sourceTree = "<group>"; };
+		1200001D /* IntroTextSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntroTextSection.swift; sourceTree = "<group>"; };
+		1200001E /* OutroSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutroSection.swift; sourceTree = "<group>"; };
+		1200001F /* GenerateSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenerateSection.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -115,6 +143,7 @@
 			isa = PBXGroup;
 			children = (
 				12000002 /* SelectedMediaItem.swift */,
+				12000012 /* ReelCreatorState.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -129,6 +158,11 @@
 				1200000F /* VideoAudioExtractor.swift */,
 				12000010 /* IntroTextOverlayRenderer.swift */,
 				12000011 /* OutroLogoOverlayRenderer.swift */,
+				12000013 /* TemporaryMediaStore.swift */,
+				12000014 /* ReelRenderConfig.swift */,
+				12000015 /* AVAssetExportSession+Async.swift */,
+				12000016 /* OverlayCompositionBuilder.swift */,
+				12000017 /* MediaImportService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -144,10 +178,34 @@
 		14000009 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				1400000B /* Components */,
+				1400000C /* Sections */,
 				12000008 /* ReelCreatorView.swift */,
 				12000009 /* ExportResultSheet.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		1400000B /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				12000018 /* LabeledDurationSlider.swift */,
+				12000019 /* OverlayPreviewCards.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		1400000C /* Sections */ = {
+			isa = PBXGroup;
+			children = (
+				1200001A /* MediaSelectionSection.swift */,
+				1200001B /* AudioSelectionSection.swift */,
+				1200001C /* PolishSection.swift */,
+				1200001D /* IntroTextSection.swift */,
+				1200001E /* OutroSection.swift */,
+				1200001F /* GenerateSection.swift */,
+			);
+			path = Sections;
 			sourceTree = "<group>";
 		};
 		1400000A /* Resources */ = {
@@ -245,6 +303,20 @@
 				11000007 /* ReelCreatorViewModel.swift in Sources */,
 				11000008 /* ReelCreatorView.swift in Sources */,
 				11000009 /* ExportResultSheet.swift in Sources */,
+				11000012 /* ReelCreatorState.swift in Sources */,
+				11000013 /* TemporaryMediaStore.swift in Sources */,
+				11000014 /* ReelRenderConfig.swift in Sources */,
+				11000015 /* AVAssetExportSession+Async.swift in Sources */,
+				11000016 /* OverlayCompositionBuilder.swift in Sources */,
+				11000017 /* MediaImportService.swift in Sources */,
+				11000018 /* LabeledDurationSlider.swift in Sources */,
+				11000019 /* OverlayPreviewCards.swift in Sources */,
+				1100001A /* MediaSelectionSection.swift in Sources */,
+				1100001B /* AudioSelectionSection.swift in Sources */,
+				1100001C /* PolishSection.swift in Sources */,
+				1100001D /* IntroTextSection.swift in Sources */,
+				1100001E /* OutroSection.swift in Sources */,
+				1100001F /* GenerateSection.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

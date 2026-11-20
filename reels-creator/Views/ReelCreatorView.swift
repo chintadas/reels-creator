@@ -1,5 +1,4 @@
 import PhotosUI
-import ReelsCreatorCore
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -19,12 +18,27 @@ struct ReelCreatorView: View {
     var body: some View {
         NavigationStack {
             Form {
-                mediaSection
-                audioSection
-                polishSection
-                introTextSection
-                outroSection
-                generateSection
+                MediaSelectionSection(
+                    viewModel: viewModel,
+                    mediaPickerItems: $mediaPickerItems
+                )
+                AudioSelectionSection(
+                    viewModel: viewModel,
+                    audioVideoPickerItem: $audioVideoPickerItem
+                )
+                PolishSection(viewModel: viewModel)
+                IntroTextSection(
+                    viewModel: viewModel,
+                    isIntroTextFocused: $isIntroTextFocused
+                )
+                OutroSection(
+                    viewModel: viewModel,
+                    logoPickerItem: $logoPickerItem,
+                    outroVideoPickerItem: $outroVideoPickerItem,
+                    showLogoFileImporter: $showLogoFileImporter,
+                    showOutroVideoImporter: $showOutroVideoImporter
+                )
+                GenerateSection(viewModel: viewModel)
             }
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Reels Creator")
@@ -75,7 +89,7 @@ struct ReelCreatorView: View {
                 allowsMultipleSelection: false
             ) { result in
                 handleImporterResult(result) { url in
-                    viewModel.importLogoFile(url: url)
+                    Task { await viewModel.importLogoFile(url: url) }
                 }
             }
             .fileImporter(
@@ -88,11 +102,11 @@ struct ReelCreatorView: View {
                 }
             }
             .sheet(isPresented: $viewModel.showExportSheet) {
-                if let url = viewModel.exportedVideoURL {
+                if let exportResult = viewModel.exportResult {
                     ExportResultSheet(
-                        videoURL: url,
-                        isSaving: viewModel.isSavingToPhotos,
-                        savedSuccess: viewModel.savedToPhotosSuccess,
+                        videoURL: exportResult.videoURL,
+                        isSaving: exportResult.saveState == .saving,
+                        savedSuccess: exportResult.saveState == .saved,
                         onSaveToPhotos: {
                             Task { await viewModel.saveExportedReelToPhotos() }
                         }
@@ -109,387 +123,6 @@ struct ReelCreatorView: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(viewModel.errorMessage ?? "")
-            }
-        }
-    }
-
-    private var mediaSection: some View {
-        Section {
-            PhotosPicker(
-                selection: $mediaPickerItems,
-                matching: .any(of: [.images, .videos]),
-                photoLibrary: .shared()
-            ) {
-                Label("Add Photos & Videos", systemImage: "photo.on.rectangle.angled")
-                    .font(.headline)
-            }
-
-            if viewModel.isLoadingMedia {
-                HStack(spacing: 10) {
-                    ProgressView()
-                    Text("Loading selected media...")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if !viewModel.selectedItems.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(Array(viewModel.selectedItems.enumerated()), id: \.element.id) { index, item in
-                            mediaClipCard(item: item, index: index)
-                        }
-                    }
-                    .padding(.vertical, 6)
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Photo Duration")
-                        Spacer()
-                        Text(String(format: "%.1fs", viewModel.polishSettings.defaultPhotoDuration))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    Slider(
-                        value: $viewModel.polishSettings.defaultPhotoDuration,
-                        in: 1.0...5.0,
-                        step: 0.5
-                    )
-                }
-
-                Button("Clear All Clips", role: .destructive) {
-                    viewModel.clearAllItems()
-                }
-                .font(.subheadline)
-            }
-        } header: {
-            Text("1. Photos & Videos")
-        } footer: {
-            Text("Clips are formatted to 1080×1920 (9:16) using a static center crop.")
-        }
-    }
-
-    private func mediaClipCard(item: SelectedMediaItem, index: Int) -> some View {
-        VStack(spacing: 6) {
-            ZStack(alignment: .topTrailing) {
-                Image(uiImage: item.thumbnail)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 84, height: 148)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(alignment: .bottomLeading) {
-                        Text(item.kind == .video ? String(format: "%.1fs", item.durationSeconds) : "IMG")
-                            .font(.caption2.bold())
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(.black.opacity(0.65), in: Capsule())
-                            .foregroundStyle(.white)
-                            .padding(5)
-                    }
-
-                Button {
-                    viewModel.removeItem(id: item.id)
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.body)
-                        .foregroundStyle(.white, .black.opacity(0.7))
-                }
-                .buttonStyle(.plain)
-                .padding(4)
-            }
-
-            HStack(spacing: 14) {
-                Button {
-                    viewModel.moveItemLeft(id: item.id)
-                } label: {
-                    Image(systemName: "chevron.left.circle")
-                }
-                .disabled(index == 0)
-
-                Button {
-                    viewModel.moveItemRight(id: item.id)
-                } label: {
-                    Image(systemName: "chevron.right.circle")
-                }
-                .disabled(index == viewModel.selectedItems.count - 1)
-            }
-            .buttonStyle(.plain)
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-        }
-    }
-
-    private var audioSection: some View {
-        Section {
-            Picker("Audio Source", selection: $viewModel.audioChoice) {
-                ForEach(AudioSourceChoice.allCases) { choice in
-                    Text(choice.rawValue).tag(choice)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            if viewModel.audioChoice == .customTrack {
-                if let audioName = viewModel.customAudioName {
-                    HStack {
-                        if let thumbnail = viewModel.customAudioThumbnail {
-                            Image(uiImage: thumbnail)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 40, height: 40)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                .overlay(alignment: .bottomTrailing) {
-                                    Image(systemName: "waveform")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundStyle(.white)
-                                        .padding(3)
-                                        .background(.black.opacity(0.65), in: Circle())
-                                        .padding(2)
-                                }
-                        } else {
-                            Image(systemName: "music.note")
-                                .foregroundStyle(.tint)
-                        }
-                        VStack(alignment: .leading) {
-                            Text(audioName)
-                                .font(.subheadline.weight(.medium))
-                                .lineLimit(1)
-                            Text(String(format: "Duration: %.1fs", viewModel.customAudioDurationSeconds))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("Remove", role: .destructive) {
-                            viewModel.clearCustomAudio()
-                        }
-                        .font(.caption)
-                        .disabled(viewModel.isExtractingAudio)
-                    }
-                }
-
-                if viewModel.isExtractingAudio {
-                    HStack(spacing: 10) {
-                        ProgressView()
-                        Text("Extracting audio from video...")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                let hasCustomAudio = viewModel.customAudioName != nil
-
-                PhotosPicker(
-                    selection: $audioVideoPickerItem,
-                    matching: .videos,
-                    photoLibrary: .shared()
-                ) {
-                    Label(
-                        hasCustomAudio ? "Replace with Video Audio" : "Extract Audio from Video",
-                        systemImage: "video"
-                    )
-                }
-                .disabled(viewModel.isExtractingAudio)
-            }
-        } header: {
-            Text("2. Audio")
-        } footer: {
-            if viewModel.audioChoice == .customTrack {
-                Text("Original audio on selected video clips is automatically muted when custom background audio is active.")
-            } else {
-                Text("Exports with original clip sound (or silent for photos) so you can attach trending music inside Instagram.")
-            }
-        }
-    }
-
-    private var polishSection: some View {
-        Section {
-            Toggle("Crossfade Transitions", isOn: $viewModel.polishSettings.crossfadeEnabled)
-
-            if viewModel.polishSettings.crossfadeEnabled {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Crossfade Duration")
-                        Spacer()
-                        Text(String(format: "%.2fs", viewModel.polishSettings.crossfadeDuration))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    Slider(
-                        value: $viewModel.polishSettings.crossfadeDuration,
-                        in: 0.2...0.8,
-                        step: 0.1
-                    )
-                }
-            }
-
-            Toggle("Beat-Sync Photos to Audio", isOn: $viewModel.polishSettings.beatSyncEnabled)
-                .disabled(viewModel.audioChoice != .customTrack || viewModel.customAudioURL == nil || viewModel.isExtractingAudio)
-        } header: {
-            Text("3. Polish & Transitions")
-        } footer: {
-            Text("Beat-Sync adjusts photo durations to land cuts on detected audio beats. Ken Burns pan/zoom is disabled.")
-        }
-    }
-
-    private var introTextSection: some View {
-        Section {
-            TextField("Optional opening text (e.g., New Arrivals)", text: $viewModel.introText, axis: .vertical)
-                .lineLimit(2...5)
-                .focused($isIntroTextFocused)
-
-            if let spec = viewModel.resolvedIntroOverlaySpec {
-                IntroTextPreviewCard(
-                    text: spec.text,
-                    backgroundThumbnail: viewModel.selectedItems.first?.thumbnail
-                )
-
-                Button("Clear Intro Text", role: .destructive) {
-                    viewModel.clearIntroText()
-                }
-                .font(.subheadline)
-            }
-        } header: {
-            Text("4. Intro Text")
-        } footer: {
-            Text("Optional. White centered text fades in and out over the first 3 seconds (stops before any outro). Leave blank to omit.")
-        }
-    }
-
-    private var outroSection: some View {
-        Section {
-            Picker("Outro Type", selection: $viewModel.outroType) {
-                ForEach(OutroTypeChoice.allCases) { choice in
-                    Text(choice.rawValue).tag(choice)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            switch viewModel.outroType {
-            case .none:
-                EmptyView()
-
-            case .logoOverlay:
-                let hasLogo = viewModel.logoImage != nil
-
-                if let logo = viewModel.logoImage {
-                    OutroLogoPreviewCard(
-                        logoImage: logo,
-                        backgroundThumbnail: viewModel.selectedItems.last?.thumbnail,
-                        durationSeconds: viewModel.outroDurationSeconds
-                    )
-                }
-
-                Label {
-                    Text(viewModel.isUsingDefaultLogo ? "Default (@snazzysboutique)" : "Custom Logo")
-                        .foregroundStyle(.secondary)
-                } icon: {
-                    Image(systemName: viewModel.isUsingDefaultLogo ? "checkmark.seal.fill" : "photo")
-                        .foregroundStyle(viewModel.isUsingDefaultLogo ? Color.accentColor : Color.secondary)
-                }
-                .font(.subheadline)
-
-                PhotosPicker(selection: $logoPickerItem, matching: .images) {
-                    Label(
-                        hasLogo ? "Replace Logo from Photos" : "Pick Logo from Photos",
-                        systemImage: "photo"
-                    )
-                }
-
-                Button {
-                    showLogoFileImporter = true
-                } label: {
-                    Label(
-                        hasLogo ? "Replace PNG from Files" : "Pick PNG from Files",
-                        systemImage: "folder"
-                    )
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Outro Duration")
-                        Spacer()
-                        Text(String(format: "%.1fs", viewModel.outroDurationSeconds))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    Slider(value: $viewModel.outroDurationSeconds, in: 1.0...4.0, step: 0.5)
-                }
-
-                if viewModel.isOutroLogoCustomized {
-                    Button("Reset to Default") {
-                        viewModel.resetOutroToDefault()
-                    }
-                    .font(.subheadline)
-                }
-
-            case .videoClip:
-                if let name = viewModel.outroVideoName {
-                    HStack {
-                        Image(systemName: "film")
-                            .foregroundStyle(.tint)
-                        VStack(alignment: .leading) {
-                            Text(name)
-                                .font(.subheadline.weight(.medium))
-                            Text(String(format: "Duration: %.1fs", viewModel.outroVideoDurationSeconds))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                PhotosPicker(selection: $outroVideoPickerItem, matching: .videos) {
-                    Label("Pick Outro Video from Photos", systemImage: "video")
-                }
-
-                Button {
-                    showOutroVideoImporter = true
-                } label: {
-                    Label("Pick Outro Video from Files", systemImage: "folder")
-                }
-            }
-        } header: {
-            Text("5. Store Logo Outro")
-        } footer: {
-            switch viewModel.outroType {
-            case .none:
-                Text("No outro overlay or clip will be added.")
-            case .logoOverlay:
-                Text("Defaults to @snazzysboutique for 2.0s. Fades in transparently over the end of the Reel without adding extra length.")
-            case .videoClip:
-                Text("Appends a pre-made outro video clip to the end of the Reel.")
-            }
-        }
-    }
-
-    private var generateSection: some View {
-        Section {
-            if !viewModel.selectedItems.isEmpty {
-                HStack {
-                    Text("Estimated Reel Length")
-                    Spacer()
-                    Text(String(format: "%.1fs", viewModel.estimatedDurationSeconds))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-            }
-
-            Button {
-                Task { await viewModel.generateReel() }
-            } label: {
-                HStack {
-                    Spacer()
-                    Label("Generate Reel", systemImage: "wand.and.stars")
-                        .font(.headline)
-                    Spacer()
-                }
-                .padding(.vertical, 6)
-            }
-            .disabled(!viewModel.canGenerateReel)
-
-            if let hint = viewModel.validationHint {
-                Text(hint)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -527,104 +160,5 @@ struct ReelCreatorView: View {
         case .failure(let error):
             viewModel.errorMessage = error.localizedDescription
         }
-    }
-}
-
-private struct ReelOverlayPreviewCard: View {
-    let overlayImage: UIImage?
-    let backgroundThumbnail: UIImage?
-    let caption: String
-
-    var body: some View {
-        VStack(spacing: 8) {
-            ZStack {
-                if let backgroundThumbnail {
-                    Image(uiImage: backgroundThumbnail)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 144, height: 256)
-                        .clipped()
-                } else {
-                    Color.black.opacity(0.9)
-                }
-
-                if let overlayImage {
-                    Image(uiImage: overlayImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 144, height: 256)
-                }
-            }
-            .frame(width: 144, height: 256)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
-            }
-            .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
-
-            Text(caption)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
-    }
-}
-
-private struct IntroTextPreviewCard: View {
-    let text: String
-    let backgroundThumbnail: UIImage?
-
-    @State private var overlayImage: UIImage?
-
-    var body: some View {
-        ReelOverlayPreviewCard(
-            overlayImage: overlayImage,
-            backgroundThumbnail: backgroundThumbnail,
-            caption: "Preview • Fades in & out over first 3.0s"
-        )
-        .onAppear {
-            refreshOverlay()
-        }
-        .onChange(of: text) { _, _ in
-            refreshOverlay()
-        }
-    }
-
-    private func refreshOverlay() {
-        overlayImage = IntroTextOverlayRenderer.renderOverlayImage(
-            text: text,
-            canvasSize: IntroTextOverlayRenderer.previewCanvasSize
-        )
-    }
-}
-
-private struct OutroLogoPreviewCard: View {
-    let logoImage: UIImage
-    let backgroundThumbnail: UIImage?
-    let durationSeconds: Double
-
-    @State private var overlayImage: UIImage?
-
-    var body: some View {
-        ReelOverlayPreviewCard(
-            overlayImage: overlayImage,
-            backgroundThumbnail: backgroundThumbnail,
-            caption: String(format: "Preview • Fades in over last %.1fs", durationSeconds)
-        )
-        .onAppear {
-            refreshOverlay()
-        }
-        .onChange(of: logoImage) { _, _ in
-            refreshOverlay()
-        }
-    }
-
-    private func refreshOverlay() {
-        overlayImage = OutroLogoOverlayRenderer.renderOverlayImage(
-            logo: logoImage,
-            canvasSize: OutroLogoOverlayRenderer.previewCanvasSize
-        )
     }
 }

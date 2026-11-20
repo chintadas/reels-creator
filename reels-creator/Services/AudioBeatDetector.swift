@@ -1,6 +1,7 @@
 import Accelerate
 import AVFoundation
 import Foundation
+import ReelsCreatorCore
 
 enum AudioBeatDetector {
     enum BeatDetectorError: LocalizedError {
@@ -17,8 +18,8 @@ enum AudioBeatDetector {
         }
     }
 
-    /// Analyzes the audio track using RMS window energy spikes (`vDSP_rmsqv`) and returns
-    /// beat timestamps in seconds suitable for snapping photo cuts.
+    /// Analyzes the audio track using RMS window energy spikes (`vDSP_rmsqv`) across all channels
+    /// and returns beat timestamps in seconds suitable for snapping photo cuts.
     static func detectBeats(
         in audioURL: URL,
         windowDuration: Double = 0.05,
@@ -29,8 +30,9 @@ enum AudioBeatDetector {
             let format = audioFile.processingFormat
             let sampleRate = format.sampleRate
             let totalFrames = audioFile.length
+            let channelCount = Int(format.channelCount)
 
-            guard sampleRate > 0, totalFrames > 0 else {
+            guard sampleRate > 0, totalFrames > 0, channelCount > 0 else {
                 throw BeatDetectorError.emptyAudioFile
             }
 
@@ -52,45 +54,26 @@ enum AudioBeatDetector {
                     throw BeatDetectorError.unsupportedAudioFormat
                 }
 
-                var rms: Float = 0
-                vDSP_rmsqv(channelData[0], 1, &rms, vDSP_Length(buffer.frameLength))
+                let frameLength = vDSP_Length(buffer.frameLength)
+                var sumSquaredRMS = 0.0
+                for channel in 0..<channelCount {
+                    var channelRMS: Float = 0
+                    vDSP_rmsqv(channelData[channel], 1, &channelRMS, frameLength)
+                    let value = Double(channelRMS)
+                    sumSquaredRMS += value * value
+                }
+                let combinedRMS = sqrt(sumSquaredRMS / Double(channelCount))
 
-                energies.append(Double(rms))
+                energies.append(combinedRMS)
                 timestamps.append(Double(processedFrames) / sampleRate)
                 processedFrames += AVAudioFramePosition(buffer.frameLength)
             }
 
-            guard !energies.isEmpty else { return [] }
-
-            let globalPeak = energies.max() ?? 0
-            guard globalPeak > 0 else { return [] }
-
-            let halfRadius = 8
-            var detectedBeats: [Double] = []
-            var lastBeatTimestamp = -cooldownSeconds
-
-            for index in energies.indices {
-                let start = max(0, index - halfRadius)
-                let end = min(energies.count - 1, index + halfRadius)
-                let slice = energies[start...end]
-                let localAverage = slice.reduce(0, +) / Double(slice.count)
-
-                let currentEnergy = energies[index]
-                let prevEnergy = index > 0 ? energies[index - 1] : 0
-                let timestamp = timestamps[index]
-
-                let isOnsetPeak = currentEnergy > localAverage * 1.4
-                    && currentEnergy > prevEnergy
-                    && currentEnergy > globalPeak * 0.12
-                    && (timestamp - lastBeatTimestamp) >= cooldownSeconds
-
-                if isOnsetPeak {
-                    detectedBeats.append(timestamp)
-                    lastBeatTimestamp = timestamp
-                }
-            }
-
-            return detectedBeats
+            return BeatOnsetDetector.detectOnsets(
+                energies: energies,
+                timestamps: timestamps,
+                cooldownSeconds: cooldownSeconds
+            )
         }.value
     }
 }

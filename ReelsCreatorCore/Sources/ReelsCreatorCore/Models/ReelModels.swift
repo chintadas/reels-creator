@@ -8,12 +8,23 @@ public enum MediaClipKind: String, Codable, Equatable, Sendable {
 public struct MediaClipSpec: Identifiable, Equatable, Sendable {
     public let id: UUID
     public let kind: MediaClipKind
-    public let sourceDurationSeconds: Double
+    public let sourceDurationSeconds: Double?
 
-    public init(id: UUID = UUID(), kind: MediaClipKind, sourceDurationSeconds: Double) {
+    public init(id: UUID = UUID(), kind: MediaClipKind, sourceDurationSeconds: Double? = nil) {
         self.id = id
         self.kind = kind
         self.sourceDurationSeconds = sourceDurationSeconds
+    }
+
+    public func resolvedSourceDuration(defaultPhotoDuration: Double) -> Double {
+        let raw: Double
+        switch kind {
+        case .photo:
+            raw = sourceDurationSeconds ?? defaultPhotoDuration
+        case .video:
+            raw = sourceDurationSeconds ?? 0.1
+        }
+        return max(0.1, raw)
     }
 }
 

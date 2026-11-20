@@ -4,7 +4,7 @@ import QuartzCore
 import ReelsCreatorCore
 import UIKit
 
-struct ReelCompositionRequest {
+struct ReelCompositionRequest: @unchecked Sendable {
     let items: [SelectedMediaItem]
     let audioMode: AudioSelectionMode
     let outroMode: OutroSelectionMode
@@ -35,7 +35,6 @@ struct ReelCompositionRequest {
 enum ReelVideoComposer {
     enum ComposerError: LocalizedError {
         case noMediaSelected
-        case missingPhotoImage(String)
         case missingVideoURL(String)
         case missingVideoTrack(String)
         case missingOutroLogoImage
@@ -47,8 +46,6 @@ enum ReelVideoComposer {
             switch self {
             case .noMediaSelected:
                 return "Please select at least one photo or video."
-            case .missingPhotoImage(let title):
-                return "Could not load image data for \(title)."
             case .missingVideoURL(let title):
                 return "Could not locate video file for \(title)."
             case .missingVideoTrack(let title):
@@ -65,6 +62,13 @@ enum ReelVideoComposer {
         }
     }
 
+    private struct PreparedInputs {
+        let clipSpecs: [MediaClipSpec]
+        let videoAssetsByID: [UUID: AVURLAsset]
+        let outroVideoAsset: AVURLAsset?
+        let effectiveOutroMode: OutroSelectionMode
+    }
+
     private struct ResolvedSegmentAsset {
         let planned: PlannedSegment
         let asset: AVURLAsset
@@ -76,9 +80,6 @@ enum ReelVideoComposer {
         let endTime: CMTime
     }
 
-    private static let renderSize = CGSize(width: 1080, height: 1920)
-    private static let timescale: CMTimeScale = 600
-
     static func compose(
         request: ReelCompositionRequest,
         statusHandler: @MainActor @Sendable (String) -> Void
@@ -87,30 +88,80 @@ enum ReelVideoComposer {
             throw ComposerError.noMediaSelected
         }
 
-        let workingDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("reel-compose-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
+        let workingDirectory = try TemporaryMediaStore.makeTemporaryDirectory(prefix: "reel-compose")
+        defer { TemporaryMediaStore.removeItemIfPresent(workingDirectory) }
 
-        // 1. Build clip specs using actual durations for video items.
         await statusHandler("Analyzing selected clips...")
+        let prepared = try await prepareInputs(request: request)
+
+        var detectedBeats: [Double] = []
+        if request.polishSettings.beatSyncEnabled,
+           case .customTrack(let audioURL, _) = request.audioMode {
+            await statusHandler("Detecting audio beats...")
+            detectedBeats = (try? await AudioBeatDetector.detectBeats(in: audioURL)) ?? []
+        }
+
+        let timeline = TimelinePlanner.plan(
+            clips: prepared.clipSpecs,
+            audio: request.audioMode,
+            outro: prepared.effectiveOutroMode,
+            settings: request.polishSettings,
+            beatTimestamps: detectedBeats,
+            introOverlay: request.introOverlay
+        )
+
+        let composition = AVMutableComposition()
+        let resolvedSegments = try await assembleComposition(
+            composition: composition,
+            timeline: timeline,
+            request: request,
+            prepared: prepared,
+            workingDirectory: workingDirectory,
+            statusHandler: statusHandler
+        )
+
+        guard let videoEnd = resolvedSegments.map(\.endTime).max(), videoEnd > .zero else {
+            throw ComposerError.noMediaSelected
+        }
+
+        let audioMix = try await attachBackgroundAudio(
+            to: composition,
+            audioMode: request.audioMode,
+            videoEnd: videoEnd
+        )
+
+        sanitizeTracks(in: composition, videoEnd: videoEnd)
+
+        await statusHandler("Encoding 9:16 Reel...")
+        let videoComposition = buildVideoComposition(for: resolvedSegments, totalDuration: videoEnd)
+        attachOverlays(
+            to: videoComposition,
+            request: request,
+            effectiveOutroMode: prepared.effectiveOutroMode,
+            resolvedSegments: resolvedSegments,
+            videoEnd: videoEnd
+        )
+
+        return try await export(
+            composition: composition,
+            videoComposition: videoComposition,
+            audioMix: audioMix
+        )
+    }
+
+    // MARK: - Pipeline Stages
+
+    private static func prepareInputs(request: ReelCompositionRequest) async throws -> PreparedInputs {
         var clipSpecs: [MediaClipSpec] = []
+        clipSpecs.reserveCapacity(request.items.count)
         var videoAssetsByID: [UUID: AVURLAsset] = [:]
 
         for item in request.items {
             switch item.kind {
             case .photo:
-                clipSpecs.append(
-                    MediaClipSpec(
-                        id: item.id,
-                        kind: .photo,
-                        sourceDurationSeconds: request.polishSettings.defaultPhotoDuration
-                    )
-                )
+                clipSpecs.append(MediaClipSpec(id: item.id, kind: .photo))
             case .video:
-                guard let videoURL = item.videoURL else {
-                    throw ComposerError.missingVideoURL(item.displayTitle)
-                }
-                let asset = AVURLAsset(url: videoURL)
+                let asset = AVURLAsset(url: item.mediaURL)
                 let duration = try await asset.load(.duration)
                 let durationSeconds = max(0.2, CMTimeGetSeconds(duration))
                 videoAssetsByID[item.id] = asset
@@ -144,26 +195,22 @@ enum ReelVideoComposer {
             effectiveOutroMode = .videoClip(durationSeconds: max(0.2, CMTimeGetSeconds(duration)))
         }
 
-        // 2. Detect beats if beat-sync is enabled with a custom audio track.
-        var detectedBeats: [Double] = []
-        if request.polishSettings.beatSyncEnabled,
-           case .customTrack(let audioURL, _) = request.audioMode {
-            await statusHandler("Detecting audio beats...")
-            detectedBeats = (try? await AudioBeatDetector.detectBeats(in: audioURL)) ?? []
-        }
-
-        // 3. Plan timeline using ReelsCreatorCore.
-        let timeline = TimelinePlanner.plan(
-            clips: clipSpecs,
-            audio: request.audioMode,
-            outro: effectiveOutroMode,
-            settings: request.polishSettings,
-            beatTimestamps: detectedBeats,
-            introOverlay: request.introOverlay
+        return PreparedInputs(
+            clipSpecs: clipSpecs,
+            videoAssetsByID: videoAssetsByID,
+            outroVideoAsset: outroVideoAsset,
+            effectiveOutroMode: effectiveOutroMode
         )
+    }
 
-        // 4. Build AVMutableComposition with two alternating video tracks for clean crossfades.
-        let composition = AVMutableComposition()
+    private static func assembleComposition(
+        composition: AVMutableComposition,
+        timeline: PlannedTimeline,
+        request: ReelCompositionRequest,
+        prepared: PreparedInputs,
+        workingDirectory: URL,
+        statusHandler: @MainActor @Sendable (String) -> Void
+    ) async throws -> [ResolvedSegmentAsset] {
         guard
             let videoTrackA = composition.addMutableTrack(
                 withMediaType: .video,
@@ -194,17 +241,18 @@ enum ReelVideoComposer {
 
         var resolvedSegments: [ResolvedSegmentAsset] = []
         let itemsByID = Dictionary(uniqueKeysWithValues: request.items.map { ($0.id, $0) })
+        let timescale = ReelRenderConfig.timescale
 
         for segment in timeline.segments {
             let segmentAsset: AVURLAsset
             let segmentTitle: String
 
             if segment.isOutro {
-                switch effectiveOutroMode {
+                switch prepared.effectiveOutroMode {
                 case .none, .logoOverlay:
                     continue
                 case .videoClip:
-                    guard let outroAsset = outroVideoAsset else {
+                    guard let outroAsset = prepared.outroVideoAsset else {
                         throw ComposerError.missingOutroVideoURL
                     }
                     segmentAsset = outroAsset
@@ -216,20 +264,16 @@ enum ReelVideoComposer {
 
                 switch item.kind {
                 case .photo:
-                    guard let photoImage = item.photoImage else {
-                        throw ComposerError.missingPhotoImage(item.displayTitle)
-                    }
                     await statusHandler("Preparing photo \(segment.index + 1) of \(timeline.segments.count)...")
                     let photoClipURL = workingDirectory.appendingPathComponent("photo-\(segment.index).mp4")
                     try await StillImageVideoGenerator.generateVideo(
-                        from: photoImage,
+                        fromImageAt: item.mediaURL,
                         durationSeconds: segment.durationSeconds,
-                        layoutMode: .aspectFillCrop,
                         outputURL: photoClipURL
                     )
                     segmentAsset = AVURLAsset(url: photoClipURL)
                 case .video:
-                    guard let cachedAsset = videoAssetsByID[item.id] else {
+                    guard let cachedAsset = prepared.videoAssetsByID[item.id] else {
                         throw ComposerError.missingVideoURL(item.displayTitle)
                     }
                     segmentAsset = cachedAsset
@@ -279,7 +323,10 @@ enum ReelVideoComposer {
                 let audioTrack = originalAudioTracks[segment.trackIndex % originalAudioTracks.count]
                 let audioTracks = try await segmentAsset.loadTracks(withMediaType: .audio)
                 if let sourceAudioTrack = audioTracks.first, insertAt >= trackEnd(audioTrack) {
-                    let audioDuration = try await segmentAsset.load(.duration)
+                    let audioTimeRange = try await sourceAudioTrack.load(.timeRange)
+                    let audioDuration = (audioTimeRange.duration.isValid && !audioTimeRange.duration.isIndefinite && audioTimeRange.duration > .zero)
+                        ? audioTimeRange.duration
+                        : assetDuration
                     let audioRange = CMTimeRange(
                         start: .zero,
                         duration: CMTimeMinimum(clampedDuration, audioDuration)
@@ -302,50 +349,62 @@ enum ReelVideoComposer {
             )
         }
 
-        guard let videoEnd = resolvedSegments.map(\.endTime).max(), videoEnd > .zero else {
-            throw ComposerError.noMediaSelected
+        return resolvedSegments
+    }
+
+    private static func attachBackgroundAudio(
+        to composition: AVMutableComposition,
+        audioMode: AudioSelectionMode,
+        videoEnd: CMTime
+    ) async throws -> AVMutableAudioMix? {
+        guard case .customTrack(let audioURL, _) = audioMode else {
+            return nil
         }
 
-        // 5. Add custom background audio (and fade out over final 0.5s) if selected.
-        var audioMix: AVMutableAudioMix?
-        if case .customTrack(let audioURL, _) = request.audioMode {
-            let bgAudioAsset = AVURLAsset(url: audioURL)
-            let bgAudioTracks = try await bgAudioAsset.loadTracks(withMediaType: .audio)
-            if let sourceAudioTrack = bgAudioTracks.first,
-               let compAudioTrack = composition.addMutableTrack(
-                   withMediaType: .audio,
-                   preferredTrackID: kCMPersistentTrackID_Invalid
-               ) {
-                let bgAssetDuration = try await bgAudioAsset.load(.duration)
-                let insertedAudioDuration = CMTimeMinimum(bgAssetDuration, videoEnd)
-                if CMTimeGetSeconds(insertedAudioDuration) > 0.05 {
-                    try compAudioTrack.insertTimeRange(
-                        CMTimeRange(start: .zero, duration: insertedAudioDuration),
-                        of: sourceAudioTrack,
-                        at: .zero
-                    )
-
-                    let totalSeconds = CMTimeGetSeconds(insertedAudioDuration)
-                    if totalSeconds > 0.8 {
-                        let fadeStart = CMTime(seconds: totalSeconds - 0.5, preferredTimescale: timescale)
-                        let fadeDuration = CMTime(seconds: 0.5, preferredTimescale: timescale)
-                        let params = AVMutableAudioMixInputParameters(track: compAudioTrack)
-                        params.setVolumeRamp(
-                            fromStartVolume: 1.0,
-                            toEndVolume: 0.0,
-                            timeRange: CMTimeRange(start: fadeStart, duration: fadeDuration)
-                        )
-                        let mix = AVMutableAudioMix()
-                        mix.inputParameters = [params]
-                        audioMix = mix
-                    }
-                }
-            }
+        let timescale = ReelRenderConfig.timescale
+        let bgAudioAsset = AVURLAsset(url: audioURL)
+        let bgAudioTracks = try await bgAudioAsset.loadTracks(withMediaType: .audio)
+        guard let sourceAudioTrack = bgAudioTracks.first,
+              let compAudioTrack = composition.addMutableTrack(
+                  withMediaType: .audio,
+                  preferredTrackID: kCMPersistentTrackID_Invalid
+              ) else {
+            return nil
         }
 
-        // 6. Sanitize the composition: no track may extend past the last video frame (otherwise
-        // the video composition instructions don't cover the full duration and export fails with
-        // err -16976), and empty tracks are removed.
+        let bgAssetDuration = try await bgAudioAsset.load(.duration)
+        let insertedAudioDuration = CMTimeMinimum(bgAssetDuration, videoEnd)
+        guard CMTimeGetSeconds(insertedAudioDuration) > 0.05 else {
+            return nil
+        }
+
+        try compAudioTrack.insertTimeRange(
+            CMTimeRange(start: .zero, duration: insertedAudioDuration),
+            of: sourceAudioTrack,
+            at: .zero
+        )
+
+        let totalSeconds = CMTimeGetSeconds(insertedAudioDuration)
+        guard totalSeconds > 0.8 else {
+            return nil
+        }
+
+        let fadeStart = CMTime(seconds: totalSeconds - 0.5, preferredTimescale: timescale)
+        let fadeDuration = CMTime(seconds: 0.5, preferredTimescale: timescale)
+        let params = AVMutableAudioMixInputParameters(track: compAudioTrack)
+        params.setVolumeRamp(
+            fromStartVolume: 1.0,
+            toEndVolume: 0.0,
+            timeRange: CMTimeRange(start: fadeStart, duration: fadeDuration)
+        )
+        let mix = AVMutableAudioMix()
+        mix.inputParameters = [params]
+        return mix
+    }
+
+    /// Ensures no track extends past `videoEnd` (which causes export failure err -16976)
+    /// and removes any tracks with zero segments.
+    private static func sanitizeTracks(in composition: AVMutableComposition, videoEnd: CMTime) {
         for track in composition.tracks {
             let end = trackEnd(track)
             if end > videoEnd {
@@ -355,66 +414,61 @@ enum ReelVideoComposer {
         for track in composition.tracks where track.segments.isEmpty {
             composition.removeTrack(track)
         }
+    }
 
-        // 7. Build 1080x1920 video composition instructions with crossfades.
-        await statusHandler("Encoding 9:16 Reel...")
-        let videoComposition = buildVideoComposition(for: resolvedSegments, totalDuration: videoEnd)
-
+    private static func attachOverlays(
+        to videoComposition: AVMutableVideoComposition,
+        request: ReelCompositionRequest,
+        effectiveOutroMode: OutroSelectionMode,
+        resolvedSegments: [ResolvedSegmentAsset],
+        videoEnd: CMTime
+    ) {
         let actualTotalSeconds = CMTimeGetSeconds(videoEnd)
-        let resolvedOutroLogoOverlay: PlannedOutroLogoOverlay?
-        if case .logoOverlay(let duration, let fadeIn) = effectiveOutroMode {
-            resolvedOutroLogoOverlay = TimelinePlanner.resolveOutroLogoOverlay(
-                durationSeconds: duration,
-                fadeInDurationSeconds: fadeIn,
-                totalDurationSeconds: actualTotalSeconds
-            )
-        } else {
-            resolvedOutroLogoOverlay = nil
-        }
+        let outroVideoStart = resolvedSegments
+            .first(where: { $0.planned.isOutro })
+            .map { CMTimeGetSeconds($0.startTime) }
 
-        let actualMaxIntroEndSeconds: Double
-        if let outroSegment = resolvedSegments.first(where: { $0.planned.isOutro }) {
-            actualMaxIntroEndSeconds = CMTimeGetSeconds(outroSegment.startTime)
-        } else if let resolvedOutroLogoOverlay {
-            actualMaxIntroEndSeconds = resolvedOutroLogoOverlay.startTimeSeconds
-        } else {
-            actualMaxIntroEndSeconds = actualTotalSeconds
-        }
+        let overlays = TimelinePlanner.resolveOverlays(
+            intro: request.introOverlay,
+            outro: effectiveOutroMode,
+            outroVideoStartTimeSeconds: outroVideoStart,
+            totalDurationSeconds: actualTotalSeconds
+        )
 
         var overlayLayers: [CALayer] = []
-        if let resolvedIntroOverlay = TimelinePlanner.resolveIntroOverlay(
-            request.introOverlay,
-            maxEndTimeSeconds: actualMaxIntroEndSeconds
-        ),
+        if let introOverlay = overlays.introOverlay,
            let introLayer = IntroTextOverlayRenderer.makeOverlayLayer(
-               for: resolvedIntroOverlay,
-               renderSize: renderSize
+               for: introOverlay,
+               renderSize: ReelRenderConfig.renderSize
            ) {
             overlayLayers.append(introLayer)
         }
 
-        if let resolvedOutroLogoOverlay,
+        if let outroLogoOverlay = overlays.outroLogoOverlay,
            let logoImage = request.outroLogoImage,
            let outroLogoLayer = OutroLogoOverlayRenderer.makeOverlayLayer(
                logo: logoImage,
-               overlay: resolvedOutroLogoOverlay,
-               renderSize: renderSize
+               overlay: outroLogoOverlay,
+               renderSize: ReelRenderConfig.renderSize
            ) {
             overlayLayers.append(outroLogoLayer)
         }
 
-        if let animationTool = IntroTextOverlayRenderer.makeAnimationTool(
+        if let animationTool = OverlayCompositionBuilder.makeAnimationTool(
             overlayLayers: overlayLayers,
-            renderSize: renderSize
+            renderSize: ReelRenderConfig.renderSize
         ) {
             videoComposition.animationTool = animationTool
         }
+    }
 
-        let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("reel-\(UUID().uuidString).mp4")
-        if FileManager.default.fileExists(atPath: outputURL.path) {
-            try FileManager.default.removeItem(at: outputURL)
-        }
+    private static func export(
+        composition: AVMutableComposition,
+        videoComposition: AVMutableVideoComposition,
+        audioMix: AVMutableAudioMix?
+    ) async throws -> URL {
+        let outputURL = TemporaryMediaStore.makeTemporaryURL(prefix: "reel", fileExtension: "mp4")
+        TemporaryMediaStore.removeItemIfPresent(outputURL)
 
         guard let exportSession = AVAssetExportSession(
             asset: composition,
@@ -423,27 +477,17 @@ enum ReelVideoComposer {
             throw ComposerError.exportSessionCreationFailed
         }
 
-        exportSession.outputURL = outputURL
-        exportSession.outputFileType = .mp4
         exportSession.videoComposition = videoComposition
         exportSession.audioMix = audioMix
         exportSession.shouldOptimizeForNetworkUse = true
 
-        if #available(iOS 18.0, *) {
-            do {
-                try await exportSession.export(to: outputURL, as: .mp4)
-            } catch {
-                throw ComposerError.exportFailed(error)
-            }
-        } else {
-            await exportSession.export()
-            if exportSession.status != .completed {
-                throw ComposerError.exportFailed(exportSession.error)
-            }
+        do {
+            try await exportSession.exportCompat(to: outputURL, as: .mp4)
+            return outputURL
+        } catch {
+            TemporaryMediaStore.removeItemIfPresent(outputURL)
+            throw ComposerError.exportFailed(error)
         }
-
-        try? FileManager.default.removeItem(at: workingDirectory)
-        return outputURL
     }
 
     private static func trackEnd(_ track: AVMutableCompositionTrack) -> CMTime {
@@ -456,9 +500,12 @@ enum ReelVideoComposer {
         for segments: [ResolvedSegmentAsset],
         totalDuration: CMTime
     ) -> AVMutableVideoComposition {
+        let renderSize = ReelRenderConfig.renderSize
+        let timescale = ReelRenderConfig.timescale
+
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
-        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+        videoComposition.frameDuration = ReelRenderConfig.frameDuration
 
         var rawBoundaries: [CMTime] = [.zero, totalDuration]
         for seg in segments {
