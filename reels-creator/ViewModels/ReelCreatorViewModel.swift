@@ -81,7 +81,7 @@ final class ReelCreatorViewModel {
             return "Extracting audio from selected video..."
         }
         if audioChoice == .customTrack && customAudioURL == nil {
-            return "Choose an audio file, extract audio from a video, or switch back to No Music (Add in IG)."
+            return "Extract audio from a video or switch back to No Music (Add in IG)."
         }
         if outroType == .staticLogo && logoImage == nil {
             return "Pick your store logo image (PNG) or set Outro to None."
@@ -178,32 +178,6 @@ final class ReelCreatorViewModel {
 
     func clearIntroText() {
         introText = ""
-    }
-
-    func importAudioFile(url: URL) async {
-        guard !isExtractingAudio else { return }
-        do {
-            let localURL = try copySecurityScopedFileToTemp(url: url, prefix: "audio")
-            let seconds: Double
-            do {
-                let asset = AVURLAsset(url: localURL)
-                let duration = try await asset.load(.duration)
-                seconds = max(0.1, CMTimeGetSeconds(duration))
-            } catch {
-                removeTemporaryFileIfPresent(at: localURL)
-                throw error
-            }
-
-            let previousAudioURL = customAudioURL
-            customAudioURL = localURL
-            customAudioName = url.lastPathComponent
-            customAudioDurationSeconds = seconds
-            customAudioThumbnail = nil
-            audioChoice = .customTrack
-            removeTemporaryFileIfPresent(at: previousAudioURL)
-        } catch {
-            errorMessage = "Could not import audio file: \(error.localizedDescription)"
-        }
     }
 
     func extractAudioFromVideoItem(_ item: PhotosPickerItem?) async {

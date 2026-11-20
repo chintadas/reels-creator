@@ -11,7 +11,6 @@ struct ReelCreatorView: View {
     @State private var outroVideoPickerItem: PhotosPickerItem?
     @State private var audioVideoPickerItem: PhotosPickerItem?
 
-    @State private var showAudioImporter = false
     @State private var showLogoFileImporter = false
     @State private var showOutroVideoImporter = false
 
@@ -68,15 +67,6 @@ struct ReelCreatorView: View {
                 Task {
                     await viewModel.extractAudioFromVideoItem(newItem)
                     audioVideoPickerItem = nil
-                }
-            }
-            .fileImporter(
-                isPresented: $showAudioImporter,
-                allowedContentTypes: [.audio],
-                allowsMultipleSelection: false
-            ) { result in
-                handleImporterResult(result) { url in
-                    Task { await viewModel.importAudioFile(url: url) }
                 }
             }
             .fileImporter(
@@ -287,16 +277,6 @@ struct ReelCreatorView: View {
                 }
 
                 let hasCustomAudio = viewModel.customAudioName != nil
-
-                Button {
-                    showAudioImporter = true
-                } label: {
-                    Label(
-                        hasCustomAudio ? "Replace with Audio File" : "Choose Audio File (MP3 / M4A)",
-                        systemImage: "folder"
-                    )
-                }
-                .disabled(viewModel.isExtractingAudio)
 
                 PhotosPicker(
                     selection: $audioVideoPickerItem,
